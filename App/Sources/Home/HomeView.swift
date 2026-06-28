@@ -33,6 +33,9 @@ struct HomeView: View {
                         FeatureTile(title: "Agent Link", subtitle: "OpenClaw / Hermes", icon: "antenna.radiowaves.left.and.right", tint: Theme.Palette.accent) {
                             GatewayView()
                         }
+                        FeatureTile(title: "Live Stream", subtitle: "Broadcast over RTMP", icon: "dot.radiowaves.left.and.right", tint: Theme.Palette.live) {
+                            RTMPStreamView()
+                        }
                         FeatureTile(title: "Records", subtitle: "Your history", icon: "clock.arrow.circlepath", tint: Theme.Palette.textSecondary) {
                             RecordsView()
                         }
