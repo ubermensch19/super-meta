@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDisplayName</key>
+	<string>Meta-Mod</string>
+	<key>UILaunchScreen</key>
+	<dict>
+		<key>UIColorName</key>
+		<string></string>
+	</dict>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+	</array>
+
+	<!-- Meta Wearables DAT SDK integration. Credentials come from build settings
+	     META_APP_ID / CLIENT_TOKEN so they stay out of source control. -->
+	<key>MWDAT</key>
+	<dict>
+		<key>AppLinkURLScheme</key>
+		<string>metamod://</string>
+		<key>MetaAppID</key>
+		<string>$(META_APP_ID)</string>
+		<key>ClientToken</key>
+		<string>$(CLIENT_TOKEN)</string>
+		<key>TeamID</key>
+		<string>$(DEVELOPMENT_TEAM)</string>
+	</dict>
+
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Meta-Mod connects to your smart glasses over Bluetooth.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Meta-Mod uses the microphone for real-time voice conversations through your glasses.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Meta-Mod saves photos captured from your glasses to your library.</string>
+	<key>NSSiriUsageDescription</key>
+	<string>Meta-Mod uses Siri so you can trigger vision recognition hands-free.</string>
+</dict>
+</plist>
