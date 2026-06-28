@@ -20,7 +20,20 @@ Packages/
   DesignSystem/             # HUD design tokens + components
 ```
 
-More modules (`GlassesKit`, `AIProviders`, `RealtimeVoice`, `AgentGateway`, `Persistence`, `FeatureKit`) land in later phases.
+Local packages: `DesignSystem` (HUD theme), `AIProviders` (Gemini/OpenAI/Claude/OpenRouter), `GlassesKit` (DAT SDK wrapper), `RealtimeVoice` (OpenAI Realtime + audio engine), `AgentGateway` (OpenClaw/Hermes node client). The app target hosts the features, settings, persistence, and Siri intents.
+
+## Features
+
+- **Live AI** — real-time voice conversation (OpenAI Realtime GA) with optional glasses-frame context; Chat/Guide/Assist modes
+- **Live Translate** — speech-to-speech translation across 11 languages
+- **Quick Vision** — image recognition with 7 modes; Siri-triggerable
+- **Vision Chat** — free-form Q&A about an image
+- **LeanEat** — food/nutrition analysis
+- **Agent Link** — connect the glasses as a node to OpenClaw or Hermes gateways
+- **Live Stream** — broadcast the glasses camera over RTMP (YouTube/Twitch/custom)
+- **Records** — SwiftData history of vision results
+
+Provider keys are entered in Settings (stored in the Keychain). Vision features use your selected provider; realtime voice uses OpenAI. When no glasses are connected (e.g. Simulator), vision features fall back to a photo picker.
 
 ## Build
 
@@ -33,4 +46,11 @@ Meta credentials (`META_APP_ID`, `CLIENT_TOKEN`) and `DEVELOPMENT_TEAM` are buil
 
 ## Status
 
-Phase 0 (scaffold) complete — design system + app shell build and run. See the build plan for the phased roadmap toward full feature parity.
+Full feature set implemented and building. Validation: app builds + runs (Simulator); live provider/realtime/gateway tests green (`AIProviders` 7/7, `AgentGateway` 6/6, `RealtimeVoice` 1/1). Glasses camera/photo/mic, RTMP, and a live OpenClaw/Hermes gateway require on-device verification with Meta credentials.
+
+Run tests with keys in the environment:
+
+```sh
+GEMINI_API_KEY=... OPENAI_API_KEY=... (cd Packages/AIProviders && swift test)
+OPENAI_API_KEY=... (cd Packages/RealtimeVoice && swift test)
+```
