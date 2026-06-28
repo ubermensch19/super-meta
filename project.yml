@@ -10,6 +10,8 @@ packages:
     path: Packages/DesignSystem
   AIProviders:
     path: Packages/AIProviders
+  GlassesKit:
+    path: Packages/GlassesKit
   MetaWearablesDAT:
     url: https://github.com/facebook/meta-wearables-dat-ios
     exactVersion: 0.5.0
@@ -44,6 +46,7 @@ targets:
     dependencies:
       - package: DesignSystem
       - package: AIProviders
+      - package: GlassesKit
       - package: MetaWearablesDAT
         product: MWDATCore
       - package: MetaWearablesDAT

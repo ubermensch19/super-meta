@@ -1,0 +1,267 @@
+import Foundation
+import UIKit
+import MWDATCore
+import MWDATCamera
+import os.log
+
+private let log = Logger(subsystem: "com.priyanshu.metamod", category: "GlassesKit")
+
+/// High-level connection state for the glasses, decoupled from the SDK's enums.
+public enum GlassesRegistration: Sendable, Equatable {
+    case unknown
+    case notRegistered
+    case registering
+    case registered
+}
+
+/// High-level streaming state.
+public enum GlassesStreamState: Sendable, Equatable {
+    case stopped
+    case waiting
+    case streaming
+    case error(String)
+}
+
+/// Desired video resolution.
+public enum GlassesVideoQuality: String, Sendable, CaseIterable {
+    case low, medium, high
+
+    var sdkResolution: StreamingResolution {
+        switch self {
+        case .low: return .low
+        case .medium: return .medium
+        case .high: return .high
+        }
+    }
+}
+
+/// A clean async/observable wrapper over the Meta Wearables DAT SDK.
+///
+/// Owns a single `StreamSession` (the SDK requires one reused instance) and
+/// republishes device, stream, frame, and photo events. Features depend on this,
+/// never on the SDK directly.
+///
+/// If the SDK cannot be configured (e.g. running in the Simulator with no Meta
+/// credentials, where there are no glasses anyway), the service degrades to an
+/// `unavailable` state instead of crashing — `isAvailable == false`.
+@MainActor
+public final class GlassesService: ObservableObject {
+
+    // MARK: Published state
+    @Published public private(set) var isAvailable = false
+    @Published public private(set) var registration: GlassesRegistration = .unknown
+    @Published public private(set) var hasActiveDevice = false
+    @Published public private(set) var streamState: GlassesStreamState = .stopped
+    @Published public private(set) var latestFrame: UIImage?
+    @Published public private(set) var lastError: String?
+
+    public var isStreaming: Bool { streamState == .streaming }
+
+    // MARK: SDK handles (nil when the SDK isn't configured)
+    private var wearables: WearablesInterface?
+    private var deviceSelector: AutoDeviceSelector?
+    private var streamSession: StreamSession?
+
+    private var stateToken: AnyListenerToken?
+    private var frameToken: AnyListenerToken?
+    private var errorToken: AnyListenerToken?
+    private var photoToken: AnyListenerToken?
+    private var deviceTask: Task<Void, Never>?
+    private var registrationTask: Task<Void, Never>?
+    private var isProcessingFrame = false
+    private var photoContinuation: CheckedContinuation<Data, Error>?
+
+    private static var didConfigure = false
+
+    /// Attempts to configure the DAT SDK exactly once. Returns whether the SDK is usable.
+    @discardableResult
+    public static func configureSDK() -> Bool {
+        if didConfigure { return true }
+        do {
+            try Wearables.configure()
+            didConfigure = true
+            log.info("Wearables SDK configured")
+            return true
+        } catch {
+            log.error("Wearables.configure() failed (glasses unavailable): \(String(describing: error))")
+            return false
+        }
+    }
+
+    public init(quality: GlassesVideoQuality = .medium) {
+        guard Self.configureSDK() else {
+            isAvailable = false
+            registration = .notRegistered
+            lastError = "Glasses SDK unavailable — set your Meta credentials and run on a device."
+            return
+        }
+
+        let wearables = Wearables.shared
+        let selector = AutoDeviceSelector(wearables: wearables)
+        let config = StreamSessionConfig(
+            videoCodec: VideoCodec.raw,
+            resolution: quality.sdkResolution,
+            frameRate: 24
+        )
+        let session = StreamSession(streamSessionConfig: config, deviceSelector: selector)
+
+        self.wearables = wearables
+        self.deviceSelector = selector
+        self.streamSession = session
+        self.isAvailable = true
+
+        observeRegistration(wearables)
+        observeDevice(selector)
+        observeSession(session)
+        updateStreamState(session.state)
+    }
+
+    // MARK: - Registration
+
+    public func startRegistration() async {
+        guard let wearables, registration != .registering else { return }
+        do { try await wearables.startRegistration() }
+        catch { setError("Registration failed: \(error.localizedDescription)") }
+    }
+
+    private func observeRegistration(_ wearables: WearablesInterface) {
+        registration = map(wearables.registrationState)
+        registrationTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            for await state in wearables.registrationStateStream() {
+                self.registration = self.map(state)
+            }
+        }
+    }
+
+    private func map(_ state: RegistrationState) -> GlassesRegistration {
+        if state == .registered { return .registered }
+        if state == .registering { return .registering }
+        return .notRegistered
+    }
+
+    // MARK: - Device
+
+    private func observeDevice(_ selector: AutoDeviceSelector) {
+        deviceTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            for await device in selector.activeDeviceStream() {
+                self.hasActiveDevice = (device != nil)
+            }
+        }
+    }
+
+    // MARK: - Streaming
+
+    public func startStreaming() async {
+        guard let wearables, let streamSession else { return }
+        do {
+            let status = try await wearables.checkPermissionStatus(Permission.camera)
+            if status != .granted {
+                let requested = try await wearables.requestPermission(Permission.camera)
+                guard requested == .granted else { setError("Camera permission denied"); return }
+            }
+            await streamSession.start()
+        } catch {
+            setError("Could not start streaming: \(error.localizedDescription)")
+        }
+    }
+
+    public func stopStreaming() async {
+        await streamSession?.stop()
+    }
+
+    private func observeSession(_ session: StreamSession) {
+        stateToken = session.statePublisher.listen { [weak self] state in
+            Task { @MainActor [weak self] in self?.updateStreamState(state) }
+        }
+        frameToken = session.videoFramePublisher.listen { [weak self] frame in
+            Task { @MainActor [weak self] in
+                guard let self, !self.isProcessingFrame else { return }
+                self.isProcessingFrame = true
+                defer { self.isProcessingFrame = false }
+                if let image = frame.makeUIImage() { self.latestFrame = image }
+            }
+        }
+        errorToken = session.errorPublisher.listen { [weak self] error in
+            Task { @MainActor [weak self] in self?.setError(String(describing: error)) }
+        }
+        photoToken = session.photoDataPublisher.listen { [weak self] photo in
+            Task { @MainActor [weak self] in
+                self?.photoContinuation?.resume(returning: photo.data)
+                self?.photoContinuation = nil
+            }
+        }
+    }
+
+    private func updateStreamState(_ state: StreamSessionState) {
+        switch state {
+        case .stopped: streamState = .stopped
+        case .streaming: streamState = .streaming
+        case .waitingForDevice, .starting, .stopping, .paused: streamState = .waiting
+        default: streamState = .error(String(describing: state))
+        }
+    }
+
+    // MARK: - Photo capture
+
+    /// Captures a single JPEG photo from the glasses. Requires an active stream.
+    public func capturePhoto(timeout: TimeInterval = 8) async throws -> Data {
+        guard let streamSession else { throw GlassesError.unavailable }
+        if let existing = photoContinuation {
+            existing.resume(throwing: GlassesError.superseded)
+            photoContinuation = nil
+        }
+        return try await withCheckedThrowingContinuation { continuation in
+            self.photoContinuation = continuation
+            streamSession.capturePhoto(format: .jpeg)
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+                if let pending = self?.photoContinuation {
+                    pending.resume(throwing: GlassesError.timeout)
+                    self?.photoContinuation = nil
+                }
+            }
+        }
+    }
+
+    /// The most recent video frame as JPEG. Used by the agent gateway's `camera.snap`.
+    public func currentFrameJPEG(maxWidth: CGFloat = 1600, quality: CGFloat = 0.8) -> Data? {
+        guard let frame = latestFrame else { return nil }
+        return frame.scaledDown(maxWidth: maxWidth).jpegData(compressionQuality: quality)
+    }
+
+    private func setError(_ message: String) {
+        lastError = message
+        log.error("\(message, privacy: .public)")
+    }
+
+    deinit {
+        stateToken = nil; frameToken = nil; errorToken = nil; photoToken = nil
+        deviceTask?.cancel(); registrationTask?.cancel()
+    }
+}
+
+public enum GlassesError: Error, LocalizedError {
+    case timeout
+    case superseded
+    case unavailable
+
+    public var errorDescription: String? {
+        switch self {
+        case .timeout: return "Timed out waiting for the photo."
+        case .superseded: return "A newer photo request replaced this one."
+        case .unavailable: return "Glasses are not available."
+        }
+    }
+}
+
+extension UIImage {
+    func scaledDown(maxWidth: CGFloat) -> UIImage {
+        guard size.width > maxWidth else { return self }
+        let scale = maxWidth / size.width
+        let newSize = CGSize(width: maxWidth, height: size.height * scale)
+        let renderer = UIGraphicsImageRenderer(size: newSize)
+        return renderer.image { _ in draw(in: CGRect(origin: .zero, size: newSize)) }
+    }
+}
