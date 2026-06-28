@@ -15,6 +15,12 @@ struct HomeView: View {
                 VStack(spacing: Theme.Spacing.lg) {
                     statusBanner
                     LazyVGrid(columns: columns, spacing: Theme.Spacing.md) {
+                        FeatureTile(title: "Live AI", subtitle: "Talk in real time", icon: "mic.fill", tint: Theme.Palette.live) {
+                            LiveAIView()
+                        }
+                        FeatureTile(title: "Live Translate", subtitle: "Speak across languages", icon: "globe", tint: Theme.Palette.positive) {
+                            LiveTranslateView()
+                        }
                         FeatureTile(title: "Quick Vision", subtitle: "Recognize what you see", icon: "eye", tint: Theme.Palette.accent) {
                             QuickVisionView()
                         }
