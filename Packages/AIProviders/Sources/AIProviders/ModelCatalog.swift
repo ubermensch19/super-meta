@@ -12,6 +12,21 @@ public struct AIModelInfo: Identifiable, Sendable, Equatable, Comparable {
     public static func < (lhs: AIModelInfo, rhs: AIModelInfo) -> Bool { lhs.id < rhs.id }
 }
 
+/// Orders models so flagship / newest families surface first, then alphabetically
+/// (descending within a tier so higher versions lead). `priority` is an ordered
+/// list of lowercase substrings, best first.
+func prioritized(_ models: [AIModelInfo], _ priority: [String]) -> [AIModelInfo] {
+    func rank(_ id: String) -> Int {
+        let lower = id.lowercased()
+        for (index, keyword) in priority.enumerated() where lower.contains(keyword) { return index }
+        return priority.count
+    }
+    return models.sorted { a, b in
+        let ra = rank(a.id), rb = rank(b.id)
+        return ra == rb ? a.id > b.id : ra < rb
+    }
+}
+
 /// Fetches the list of models a provider exposes for the given API key.
 public func listModels(_ vendor: AIVendor, apiKey: String, session: URLSession = .shared) async throws -> [AIModelInfo] {
     guard !apiKey.isEmpty else { throw AIProviderError.missingAPIKey }
@@ -28,14 +43,15 @@ private func listGeminiModels(apiKey: String, session: URLSession) async throws 
     let data = try await HTTP.send(URLRequest(url: url), session: session)
     guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
           let models = json["models"] as? [[String: Any]] else { return [] }
-    return models.compactMap { entry -> AIModelInfo? in
+    let parsed = models.compactMap { entry -> AIModelInfo? in
         guard let fullName = entry["name"] as? String else { return nil }
         let methods = entry["supportedGenerationMethods"] as? [String] ?? []
         guard methods.contains("generateContent") else { return nil }
         let id = fullName.replacingOccurrences(of: "models/", with: "")
         let display = entry["displayName"] as? String ?? id
         return AIModelInfo(id: id, name: display)
-    }.sorted()
+    }
+    return prioritized(parsed, ["gemini-3", "gemini-2.5", "gemini-2.0", "gemini-1.5", "gemini"])
 }
 
 private func listOpenAIModels(apiKey: String, session: URLSession) async throws -> [AIModelInfo] {
@@ -45,11 +61,12 @@ private func listOpenAIModels(apiKey: String, session: URLSession) async throws 
     guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
           let models = json["data"] as? [[String: Any]] else { return [] }
     let excluded = ["whisper", "tts", "embedding", "dall-e", "moderation", "audio", "image", "transcribe", "search", "babbage", "davinci"]
-    return models.compactMap { entry -> AIModelInfo? in
+    let parsed = models.compactMap { entry -> AIModelInfo? in
         guard let id = entry["id"] as? String else { return nil }
         if excluded.contains(where: id.contains) { return nil }
         return AIModelInfo(id: id, name: id)
-    }.sorted()
+    }
+    return prioritized(parsed, ["gpt-5.5", "gpt-5", "gpt-realtime", "o4", "o3", "gpt-4.1", "gpt-4o", "gpt-4", "o1"])
 }
 
 private func listClaudeModels(apiKey: String, session: URLSession) async throws -> [AIModelInfo] {
@@ -59,10 +76,11 @@ private func listClaudeModels(apiKey: String, session: URLSession) async throws 
     let data = try await HTTP.send(request, session: session)
     guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
           let models = json["data"] as? [[String: Any]] else { return [] }
-    return models.compactMap { entry -> AIModelInfo? in
+    let parsed = models.compactMap { entry -> AIModelInfo? in
         guard let id = entry["id"] as? String else { return nil }
         return AIModelInfo(id: id, name: entry["display_name"] as? String ?? id)
-    }.sorted()
+    }
+    return prioritized(parsed, ["opus-4", "sonnet-4", "claude-4", "3-7-sonnet", "3-7", "3-5-sonnet", "3-5", "claude-3"])
 }
 
 private func listOpenRouterModels(apiKey: String, session: URLSession) async throws -> [AIModelInfo] {
@@ -71,8 +89,9 @@ private func listOpenRouterModels(apiKey: String, session: URLSession) async thr
     let data = try await HTTP.send(request, session: session)
     guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
           let models = json["data"] as? [[String: Any]] else { return [] }
-    return models.compactMap { entry -> AIModelInfo? in
+    let parsed = models.compactMap { entry -> AIModelInfo? in
         guard let id = entry["id"] as? String else { return nil }
         return AIModelInfo(id: id, name: entry["name"] as? String ?? id)
-    }.sorted()
+    }
+    return prioritized(parsed, ["gpt-5", "claude-opus-4", "gemini-3", "gpt-realtime", "claude-sonnet-4", "gemini-2.5", "llama-4", "gpt-4o", "claude-3"])
 }

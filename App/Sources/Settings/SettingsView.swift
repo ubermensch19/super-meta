@@ -2,11 +2,13 @@ import SwiftUI
 import DesignSystem
 import AIProviders
 import GlassesKit
+import Inject
 
 struct SettingsView: View {
     @EnvironmentObject private var providers: ProviderManager
     @EnvironmentObject private var glasses: GlassesService
     @Environment(\.dismiss) private var dismiss
+    @ObserveInjection var inject
 
     var body: some View {
         NavigationStack {
@@ -28,6 +30,7 @@ struct SettingsView: View {
             }
         }
         .preferredColorScheme(.dark)
+        .enableInjection()
     }
 
     private var deviceSection: some View {

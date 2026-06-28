@@ -1,10 +1,12 @@
 import SwiftUI
 import DesignSystem
 import GlassesKit
+import Inject
 
 struct RTMPStreamView: View {
     @EnvironmentObject private var glasses: GlassesService
     @StateObject private var service = RTMPService()
+    @ObserveInjection var inject
 
     @AppStorage("rtmp_url") private var url = ""
     @State private var streamKey = ""
@@ -61,6 +63,7 @@ struct RTMPStreamView: View {
         .navigationTitle("Live Stream")
         .navigationBarTitleDisplayMode(.inline)
         .preferredColorScheme(.dark)
+        .enableInjection()
         .onDisappear { service.stop() }
     }
 

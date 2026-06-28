@@ -4,6 +4,7 @@ import SwiftData
 import DesignSystem
 import AIProviders
 import GlassesKit
+import Inject
 
 @MainActor
 final class QuickVisionViewModel: ObservableObject {
@@ -63,6 +64,7 @@ struct QuickVisionView: View {
     @Environment(\.modelContext) private var context
     @StateObject private var vm = QuickVisionViewModel()
     @State private var pickerItem: PhotosPickerItem?
+    @ObserveInjection var inject
 
     var body: some View {
         ScrollView {
@@ -84,6 +86,7 @@ struct QuickVisionView: View {
         .navigationTitle("Quick Vision")
         .navigationBarTitleDisplayMode(.inline)
         .preferredColorScheme(.dark)
+        .enableInjection()
         .onChange(of: pickerItem) { _, item in
             Task {
                 if let data = try? await item?.loadTransferable(type: Data.self) {

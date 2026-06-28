@@ -1,10 +1,12 @@
 import SwiftUI
 import SwiftData
 import DesignSystem
+import Inject
 
 struct VisionRecognitionView: View {
     @EnvironmentObject private var providers: ProviderManager
     @Environment(\.modelContext) private var context
+    @ObserveInjection var inject
 
     @State private var image: UIImage?
     @State private var prompt = ""
@@ -65,6 +67,7 @@ struct VisionRecognitionView: View {
         .navigationTitle("Vision Chat")
         .navigationBarTitleDisplayMode(.inline)
         .preferredColorScheme(.dark)
+        .enableInjection()
     }
 
     private func ask() async {
