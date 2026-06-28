@@ -167,42 +167,89 @@ struct APIKeyEntryView: View {
     }
 }
 
-/// Simple model id editor (free text + the vendor default).
+/// Fetches and lists every model the provider exposes; tap to select.
+/// Falls back to manual entry if there's no key or the fetch fails.
 struct ModelPickerView: View {
     let vendor: AIVendor
     @EnvironmentObject private var providers: ProviderManager
     @Environment(\.dismiss) private var dismiss
-    @State private var draft: String = ""
+
+    @State private var models: [AIModelInfo] = []
+    @State private var loading = false
+    @State private var loadError: String?
+    @State private var search = ""
+    @State private var manual = ""
+
+    private var filtered: [AIModelInfo] {
+        guard !search.isEmpty else { return models }
+        return models.filter { $0.id.localizedCaseInsensitiveContains(search) || $0.name.localizedCaseInsensitiveContains(search) }
+    }
 
     var body: some View {
         List {
-            Section {
-                TextField("Model id", text: $draft)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .foregroundStyle(Theme.Palette.textPrimary)
-                Button("Use default (\(vendor.defaultModel))") { draft = vendor.defaultModel }
-                    .foregroundStyle(Theme.Palette.accent)
-            } footer: {
-                Text("Must be a vision-capable model for image features.")
-                    .foregroundStyle(Theme.Palette.textMuted)
+            if loading {
+                Section { HStack { ProgressView().tint(Theme.Palette.accent); Text("Loading models…").foregroundStyle(Theme.Palette.textSecondary) } }
+                    .listRowBackground(Theme.Palette.surface)
             }
-            .listRowBackground(Theme.Palette.surface)
 
-            Section {
-                Button("Save") {
-                    providers.setModel(draft.isEmpty ? vendor.defaultModel : draft, for: vendor)
-                    dismiss()
-                }
-                .foregroundStyle(Theme.Palette.accent)
+            if let loadError {
+                Section {
+                    Text(loadError).font(Theme.Font.body(14)).foregroundStyle(Theme.Palette.live)
+                    TextField("Model id", text: $manual)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                        .foregroundStyle(Theme.Palette.textPrimary)
+                    Button("Use \"\(manual.isEmpty ? vendor.defaultModel : manual)\"") {
+                        providers.setModel(manual.isEmpty ? vendor.defaultModel : manual, for: vendor); dismiss()
+                    }.foregroundStyle(Theme.Palette.accent)
+                } header: { Text("Manual entry") }
+                .listRowBackground(Theme.Palette.surface)
             }
-            .listRowBackground(Theme.Palette.surface)
+
+            if !models.isEmpty {
+                Section {
+                    ForEach(filtered) { model in
+                        Button { providers.setModel(model.id, for: vendor); dismiss() } label: {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(model.name).foregroundStyle(Theme.Palette.textPrimary)
+                                    if model.name != model.id {
+                                        Text(model.id).font(Theme.Font.readout(11)).foregroundStyle(Theme.Palette.textMuted)
+                                    }
+                                }
+                                Spacer()
+                                if providers.model(for: vendor) == model.id {
+                                    Image(systemName: "checkmark").foregroundStyle(Theme.Palette.accent)
+                                }
+                            }
+                        }
+                    }
+                } header: { Text("\(models.count) models") }
+                .listRowBackground(Theme.Palette.surface)
+            }
         }
         .scrollContentBackground(.hidden)
         .background(Theme.Palette.canvas.ignoresSafeArea())
         .navigationTitle("\(vendor.displayName) Model")
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear { draft = providers.model(for: vendor) }
+        .searchable(text: $search, prompt: "Filter models")
         .preferredColorScheme(.dark)
+        .task { await load() }
+    }
+
+    private func load() async {
+        let key = providers.apiKey(for: vendor)
+        manual = providers.model(for: vendor)
+        guard !key.isEmpty else {
+            loadError = "Add your \(vendor.displayName) API key first to load the model list."
+            return
+        }
+        loading = true
+        defer { loading = false }
+        do {
+            models = try await listModels(vendor, apiKey: key)
+            if models.isEmpty { loadError = "No models returned." }
+        } catch {
+            loadError = (error as? AIProviderError)?.errorDescription ?? error.localizedDescription
+        }
     }
 }
