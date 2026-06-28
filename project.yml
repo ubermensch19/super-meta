@@ -8,6 +8,14 @@ options:
 packages:
   DesignSystem:
     path: Packages/DesignSystem
+  AIProviders:
+    path: Packages/AIProviders
+  MetaWearablesDAT:
+    url: https://github.com/facebook/meta-wearables-dat-ios
+    exactVersion: 0.5.0
+  HaishinKit:
+    url: https://github.com/Turbo1123/HaishinKit.swift
+    branch: fix-concurrency
 
 settings:
   base:
@@ -35,3 +43,14 @@ targets:
         ENABLE_PREVIEWS: YES
     dependencies:
       - package: DesignSystem
+      - package: AIProviders
+      - package: MetaWearablesDAT
+        product: MWDATCore
+      - package: MetaWearablesDAT
+        product: MWDATCamera
+      - package: MetaWearablesDAT
+        product: MWDATMockDevice
+      - package: HaishinKit
+        product: HaishinKit
+      - package: HaishinKit
+        product: RTMPHaishinKit
