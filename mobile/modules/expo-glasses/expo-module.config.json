@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android", "web"],
+  "apple": {
+    "modules": ["ExpoGlassesModule"]
+  },
+  "android": {
+    "modules": ["expo.modules.glasses.ExpoGlassesModule"]
+  }
+}

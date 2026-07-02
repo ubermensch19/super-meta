@@ -1,0 +1,27 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'expo.modules.glasses'
+version = '0.1.0'
+
+android {
+  namespace "expo.modules.glasses"
+  defaultConfig {
+    versionCode 1
+    versionName "0.1.0"
+  }
+  lintOptions {
+    abortOnError false
+  }
+}
+
+dependencies {
+  // Meta Wearables DAT SDK (GitHub Packages Maven — the repo + credentials are
+  // injected into the app's settings.gradle by plugins/withGlasses.js, which
+  // needs a GITHUB_TOKEN with read:packages scope).
+  implementation "com.meta.wearable:mwdat-core:0.4.0"
+  implementation "com.meta.wearable:mwdat-camera:0.4.0"
+  implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1"
+}
