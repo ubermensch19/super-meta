@@ -21,7 +21,7 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>CFBundleDisplayName</key>
-	<string>Meta-Mod</string>
+	<string>Super Meta</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -69,12 +69,12 @@
 		<true/>
 	</dict>
 	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>Meta-Mod connects to your smart glasses over Bluetooth.</string>
+	<string>Super Meta connects to your smart glasses over Bluetooth.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Meta-Mod uses the microphone for real-time voice conversations through your glasses.</string>
+	<string>Super Meta uses the microphone for real-time voice conversations through your glasses.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>Meta-Mod saves photos captured from your glasses to your library.</string>
+	<string>Super Meta saves photos captured from your glasses to your library.</string>
 	<key>NSSiriUsageDescription</key>
-	<string>Meta-Mod uses Siri so you can trigger vision recognition hands-free.</string>
+	<string>Super Meta uses Siri so you can trigger vision recognition hands-free.</string>
 </dict>
 </plist>

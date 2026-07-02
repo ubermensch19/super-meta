@@ -1,7 +1,7 @@
 import AppIntents
 import Foundation
 
-/// Siri / Shortcuts entry point. Opens Meta-Mod straight into Quick Vision so the
+/// Siri / Shortcuts entry point. Opens Super Meta straight into Quick Vision so the
 /// user can recognize what they're looking at hands-free.
 struct QuickVisionIntent: AppIntent {
     static let title: LocalizedStringResource = "Quick Vision"

@@ -149,7 +149,7 @@ public final class GatewayClient: ObservableObject {
         let signature = (try? identity.sign(signedString)) ?? ""
         let params: [String: Any] = [
             "minProtocol": 3, "maxProtocol": 4,
-            "client": ["id": clientID, "mode": "node", "name": "Meta-Mod"],
+            "client": ["id": clientID, "mode": "node", "name": "Super Meta"],
             "role": "node",
             "scopes": scopes,
             "caps": ["camera"],

@@ -1,8 +1,8 @@
-# Meta-Mod
+# Super Meta
 
 A smart-glasses AI assistant for Ray-Ban Meta glasses, built on Meta's Wearables DAT SDK. Multimodal vision and real-time voice, powered by your choice of OpenAI, Anthropic Claude, or OpenRouter, with optional connection to OpenClaw / Hermes agent gateways.
 
-> "Meta" is a trademark of Meta Platforms — `Meta-Mod` is a working name for development only and must be renamed before any public distribution.
+> "Meta" is a trademark of Meta Platforms — `Super Meta` is a working name for development only and must be renamed before any public distribution.
 
 ## Requirements
 

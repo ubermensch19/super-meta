@@ -66,9 +66,15 @@ struct HomeView: View {
     private var header: some View {
         HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Meta-Mod")
-                    .font(.system(size: 30, weight: .bold))
-                    .foregroundStyle(Theme.Palette.textPrimary)
+                HStack(spacing: Theme.Spacing.sm) {
+                    Image("Logomark")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(height: 26)
+                    Text("Super Meta")
+                        .font(.system(size: 30, weight: .bold))
+                        .foregroundStyle(Theme.Palette.textPrimary)
+                }
                 connectionChip
             }
             Spacer()
