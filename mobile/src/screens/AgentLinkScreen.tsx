@@ -1,10 +1,14 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { View, Text, TextInput, Switch, Pressable, ScrollView, StyleSheet } from 'react-native';
+import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
 import { Palette, Spacing, Radius } from '../theme';
 import { Icon } from '../components/Icon';
-import { useGateway } from '../gateway/useGateway';
+import { useGateway } from '../gateway/GatewayProvider';
 import { ConnectionState } from '../gateway/GatewayClient';
+import { RootStackParamList } from '../navigation';
+
+type Props = NativeStackScreenProps<RootStackParamList, 'AgentLink'>;
 
 const STATUS: Record<ConnectionState, { label: string; color: string }> = {
   disconnected: { label: 'Disconnected', color: Palette.textMuted },
@@ -14,11 +18,21 @@ const STATUS: Record<ConnectionState, { label: string; color: string }> = {
   error: { label: 'Error', color: Palette.live },
 };
 
-export default function AgentLinkScreen() {
+export default function AgentLinkScreen({ navigation }: Props) {
   const gw = useGateway();
   const s = STATUS[gw.state];
   const isConnected = gw.state === 'connected';
   const isBusy = gw.state === 'connecting';
+
+  // When the node comes online, spawn the session (chat + working traces).
+  const spawned = useRef(false);
+  useEffect(() => {
+    if ((gw.state === 'connected' || gw.state === 'waitingForPairing') && !spawned.current) {
+      spawned.current = true;
+      navigation.navigate('AgentSession');
+    }
+    if (gw.state === 'disconnected') spawned.current = false;
+  }, [gw.state, navigation]);
 
   return (
     <ScrollView style={styles.canvas} contentContainerStyle={{ padding: Spacing.lg, gap: Spacing.lg }}>

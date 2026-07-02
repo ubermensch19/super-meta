@@ -44,6 +44,7 @@ const handler = async (method: string) => {
 };
 
 let reachedConnected = false;
+const traces: string[] = [];
 const client = new GatewayClient(
   { host: '127.0.0.1', port: 18789, useTLS: false, token: '' },
   identity,
@@ -52,13 +53,29 @@ const client = new GatewayClient(
     console.log(`[client] state → ${state}${error ? ' (' + error + ')' : ''}`);
     if (state === 'connected') reachedConnected = true;
   },
+  (t) => {
+    traces.push(t.kind);
+    console.log(`[trace] ${t.kind}: ${t.text}${t.detail ? ' — ' + t.detail : ''}`);
+  },
 );
 
 console.log('[client] connecting as node', identity.nodeID, '…');
 client.connect();
 
 setTimeout(() => {
-  console.log(reachedConnected ? '\nE2E OK ✅ — real GatewayClient connected + served a command.' : '\nE2E FAILED ❌ — never reached connected.');
+  // Also send a user chat to exercise the session's chat path.
+  client.sendChat('hello agent');
+}, 1500);
+
+setTimeout(() => {
+  const gotAgentTrace = traces.includes('agent'); // agent ran a command
+  const gotUserTrace = traces.includes('user'); // user chat recorded
+  const ok = reachedConnected && gotAgentTrace && gotUserTrace;
+  console.log(
+    ok
+      ? '\nE2E OK ✅ — connected, agent-command trace + user-chat trace both fired (session feed works).'
+      : `\nE2E FAILED ❌ — connected:${reachedConnected} agentTrace:${gotAgentTrace} userTrace:${gotUserTrace}`,
+  );
   client.disconnect();
-  process.exit(reachedConnected ? 0 : 1);
+  process.exit(ok ? 0 : 1);
 }, 3000);

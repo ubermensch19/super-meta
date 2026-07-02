@@ -34,6 +34,15 @@ export type CommandHandler = (
   params: Record<string, any>,
 ) => Promise<Record<string, any>>;
 
+// A line in the session's "working traces" feed.
+export interface Trace {
+  id: string;
+  kind: 'system' | 'agent' | 'user' | 'error';
+  text: string;
+  detail?: string;
+  at: number;
+}
+
 const CLIENT_ID = 'metamod-ios';
 const SCOPES = ['operator.read', 'operator.write'];
 
@@ -51,16 +60,33 @@ export class GatewayClient {
     private identity: DeviceIdentity,
     private handler: CommandHandler,
     private onState: (state: ConnectionState, error: string) => void,
+    private onTrace?: (t: Trace) => void,
   ) {}
 
   update(config: GatewayConfig) {
     this.config = config;
   }
 
+  private trace(kind: Trace['kind'], text: string, detail?: string) {
+    this.onTrace?.({ id: uuid(), kind, text, detail, at: Date.now() });
+  }
+
   private setState(s: ConnectionState, error = '') {
     this.state = s;
     this.lastError = error;
     this.onState(s, error);
+    if (s === 'connected') this.trace('system', 'Connected to gateway as ' + this.identity.nodeID);
+    if (s === 'waitingForPairing') this.trace('system', 'Waiting for pairing approval…');
+    if (s === 'error') this.trace('error', error || 'Connection error');
+  }
+
+  /** Send a user chat message into the session. */
+  sendChat(text: string) {
+    if (!text.trim()) return;
+    this.trace('user', text);
+    // Node→operator chat isn't part of the core v3 command set; send it as a
+    // best-effort `chat` request so gateways that support it receive it.
+    this.send({ type: 'req', id: uuid(), method: 'chat', params: { text } });
   }
 
   connect() {
@@ -157,12 +183,15 @@ export class GatewayClient {
     }
     const command = (params.command as string) ?? '';
     const args = (params.params as Record<string, any>) ?? {};
+    this.trace('agent', `Agent ran ${command}`, Object.keys(args).length ? JSON.stringify(args) : undefined);
     try {
       const payload = await this.handler(command, args);
+      this.trace('system', `${command} → ok`, summarize(payload));
       this.respond(id, true, payload);
     } catch (e: any) {
       const err: GatewayError =
         e && e.code ? e : { code: 'ERROR', message: e?.message ?? String(e) };
+      this.trace('error', `${command} → ${err.code}`, err.message);
       this.respond(id, false, undefined, err);
     }
   }
@@ -181,6 +210,16 @@ export class GatewayClient {
   private send(frame: Frame) {
     if (this.ws && this.ws.readyState === 1) this.ws.send(encodeFrame(frame));
   }
+}
+
+// Short one-line summary of a command result for the trace feed (base64 blobs elided).
+function summarize(payload: Record<string, any>): string {
+  const parts: string[] = [];
+  for (const [k, v] of Object.entries(payload)) {
+    if (k === 'base64' && typeof v === 'string') parts.push(`base64(${v.length}b)`);
+    else parts.push(`${k}=${typeof v === 'object' ? JSON.stringify(v) : v}`);
+  }
+  return parts.join(' · ');
 }
 
 function uuid(): string {

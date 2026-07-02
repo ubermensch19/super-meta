@@ -1,9 +1,16 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 
 import { capturePhoto, getStatus as glassesStatus } from '../../modules/expo-glasses';
 import { loadIdentity } from './identity';
-import { CommandHandler, ConnectionState, DEFAULT_CONFIG, GatewayClient, GatewayConfig } from './GatewayClient';
+import {
+  CommandHandler,
+  ConnectionState,
+  DEFAULT_CONFIG,
+  GatewayClient,
+  GatewayConfig,
+  Trace,
+} from './GatewayClient';
 
 const KEYS = { host: 'gateway_host', port: 'gateway_port', tls: 'gateway_tls', token: 'gateway_token' };
 
@@ -22,17 +29,16 @@ async function loadConfig(): Promise<GatewayConfig> {
   };
 }
 
-async function saveConfig(c: GatewayConfig) {
-  await Promise.all([
-    AsyncStorage.setItem(KEYS.host, c.host),
-    AsyncStorage.setItem(KEYS.port, String(c.port)),
-    AsyncStorage.setItem(KEYS.tls, String(c.useTLS)),
-    AsyncStorage.setItem(KEYS.token, c.token),
+function saveConfig(c: GatewayConfig) {
+  void AsyncStorage.multiSet([
+    [KEYS.host, c.host],
+    [KEYS.port, String(c.port)],
+    [KEYS.tls, String(c.useTLS)],
+    [KEYS.token, c.token],
   ]);
 }
 
-// Node command handler — mirrors GatewayService.handle (camera.snap / camera.list
-// / device.status / device.info). camera.snap pulls a frame from the glasses module.
+// Node command handler — mirrors GatewayService.handle.
 function makeHandler(nodeID: string): CommandHandler {
   return async (method, params) => {
     switch (method) {
@@ -55,23 +61,28 @@ function makeHandler(nodeID: string): CommandHandler {
   };
 }
 
-export interface GatewayHook {
+interface GatewayContextValue {
   state: ConnectionState;
   error: string;
   nodeID: string;
   config: GatewayConfig;
   ready: boolean;
+  traces: Trace[];
   setConfig: (c: GatewayConfig) => void;
   connect: () => void;
   disconnect: () => void;
+  sendChat: (text: string) => void;
 }
 
-export function useGateway(): GatewayHook {
+const GatewayContext = createContext<GatewayContextValue | null>(null);
+
+export function GatewayProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<ConnectionState>('disconnected');
   const [error, setError] = useState('');
   const [nodeID, setNodeID] = useState('rayban-…');
   const [config, setConfigState] = useState<GatewayConfig>(DEFAULT_CONFIG);
   const [ready, setReady] = useState(false);
+  const [traces, setTraces] = useState<Trace[]>([]);
   const client = useRef<GatewayClient | null>(null);
 
   useEffect(() => {
@@ -81,10 +92,16 @@ export function useGateway(): GatewayHook {
       if (!alive) return;
       setNodeID(identity.nodeID);
       setConfigState(cfg);
-      client.current = new GatewayClient(cfg, identity, makeHandler(identity.nodeID), (s, e) => {
-        setState(s);
-        setError(e);
-      });
+      client.current = new GatewayClient(
+        cfg,
+        identity,
+        makeHandler(identity.nodeID),
+        (s, e) => {
+          setState(s);
+          setError(e);
+        },
+        (t) => setTraces((prev) => [...prev, t]),
+      );
       setReady(true);
     })();
     return () => {
@@ -93,14 +110,31 @@ export function useGateway(): GatewayHook {
     };
   }, []);
 
-  const setConfig = useCallback((c: GatewayConfig) => {
-    setConfigState(c);
-    client.current?.update(c);
-    void saveConfig(c);
-  }, []);
+  const value: GatewayContextValue = {
+    state,
+    error,
+    nodeID,
+    config,
+    ready,
+    traces,
+    setConfig: (c) => {
+      setConfigState(c);
+      client.current?.update(c);
+      saveConfig(c);
+    },
+    connect: () => {
+      setTraces([]);
+      client.current?.connect();
+    },
+    disconnect: () => client.current?.disconnect(),
+    sendChat: (text) => client.current?.sendChat(text),
+  };
 
-  const connect = useCallback(() => client.current?.connect(), []);
-  const disconnect = useCallback(() => client.current?.disconnect(), []);
+  return <GatewayContext.Provider value={value}>{children}</GatewayContext.Provider>;
+}
 
-  return { state, error, nodeID, config, ready, setConfig, connect, disconnect };
+export function useGateway(): GatewayContextValue {
+  const ctx = useContext(GatewayContext);
+  if (!ctx) throw new Error('useGateway must be used within a GatewayProvider');
+  return ctx;
 }

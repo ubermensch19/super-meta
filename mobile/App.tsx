@@ -8,6 +8,8 @@ import { Palette } from './src/theme';
 import HomeScreen from './src/screens/HomeScreen';
 import PlaceholderScreen from './src/screens/PlaceholderScreen';
 import AgentLinkScreen from './src/screens/AgentLinkScreen';
+import AgentSessionScreen from './src/screens/AgentSessionScreen';
+import { GatewayProvider } from './src/gateway/GatewayProvider';
 import { RootStackParamList, RouteName, SEE, CONNECT } from './src/navigation';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -47,6 +49,7 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <StatusBar style="light" />
+      <GatewayProvider>
       <NavigationContainer theme={navTheme}>
         <Stack.Navigator
           screenOptions={{
@@ -58,6 +61,7 @@ export default function App() {
         >
           <Stack.Screen name="Home" component={HomeScreen} options={{ headerShown: false }} />
           <Stack.Screen name="AgentLink" component={AgentLinkScreen} options={{ title: 'Agent Link' }} />
+          <Stack.Screen name="AgentSession" component={AgentSessionScreen} options={{ title: 'Agent Session' }} />
           {(Object.keys(BLURBS) as RouteName[])
             .filter((route) => route !== 'AgentLink')
             .map((route) => (
@@ -67,6 +71,7 @@ export default function App() {
             ))}
         </Stack.Navigator>
       </NavigationContainer>
+      </GatewayProvider>
     </SafeAreaProvider>
   );
 }
