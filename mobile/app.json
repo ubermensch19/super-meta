@@ -28,6 +28,9 @@
     "web": {
       "favicon": "./assets/favicon.png"
     },
-    "plugins": ["./plugins/withGlasses"]
+    "plugins": [
+      "./plugins/withGlasses",
+      "expo-secure-store"
+    ]
   }
 }

@@ -7,6 +7,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { Palette } from './src/theme';
 import HomeScreen from './src/screens/HomeScreen';
 import PlaceholderScreen from './src/screens/PlaceholderScreen';
+import AgentLinkScreen from './src/screens/AgentLinkScreen';
 import { RootStackParamList, RouteName, SEE, CONNECT } from './src/navigation';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -56,11 +57,14 @@ export default function App() {
           }}
         >
           <Stack.Screen name="Home" component={HomeScreen} options={{ headerShown: false }} />
-          {(Object.keys(BLURBS) as RouteName[]).map((route) => (
-            <Stack.Screen key={route} name={route} options={{ title: BLURBS[route]!.title }}>
-              {() => <PlaceholderScreen title={BLURBS[route]!.title} blurb={BLURBS[route]!.blurb} />}
-            </Stack.Screen>
-          ))}
+          <Stack.Screen name="AgentLink" component={AgentLinkScreen} options={{ title: 'Agent Link' }} />
+          {(Object.keys(BLURBS) as RouteName[])
+            .filter((route) => route !== 'AgentLink')
+            .map((route) => (
+              <Stack.Screen key={route} name={route} options={{ title: BLURBS[route]!.title }}>
+                {() => <PlaceholderScreen title={BLURBS[route]!.title} blurb={BLURBS[route]!.blurb} />}
+              </Stack.Screen>
+            ))}
         </Stack.Navigator>
       </NavigationContainer>
     </SafeAreaProvider>
