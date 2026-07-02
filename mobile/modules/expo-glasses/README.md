@@ -25,17 +25,14 @@ The module only loads in a **dev/production build**, not Expo Go:
 npx expo prebuild            # applies plugins/withGlasses.js
 ```
 
-**iOS** — no secrets. The SDK is the public SwiftPM package
-`github.com/facebook/meta-wearables-dat-ios@0.5.0` and we use Developer Mode
-(`MetaAppID = 0`). The plugin adds the package to the app target.
+**iOS** — no secrets. The SDK's SwiftPM package is just binary xcframeworks, which
+this module **vendors** (`ios/Frameworks/*.xcframework`, referenced by the podspec)
+so `MWDATCore` links into the module target. We use Developer Mode (`MetaAppID = 0`).
+The frameworks are gitignored (~74 MB) — run `scripts/fetch-frameworks.sh` after clone.
 ```sh
-cd ios && pod install && cd ..
-npx expo run:ios --device      # a real iPhone + real Ray-Ban glasses is required to see it connect
+scripts/fetch-frameworks.sh            # if modules/expo-glasses/ios/Frameworks is empty
+npx expo run:ios --device              # a real iPhone + Ray-Ban glasses to see it connect
 ```
-> Note: the SwiftPM products are added to the **app** target. If `canImport(MWDATCore)`
-> resolves false inside the module during the first build (glasses stay "unavailable"),
-> add `MWDATCore`/`MWDATCamera` to the **ExpoGlasses** target's dependencies in Xcode —
-> this is the one linkage step that can't be pre-validated without a device build.
 
 **Android** — needs a GitHub token with **`read:packages`** for the DAT Maven artifact:
 ```sh
@@ -48,5 +45,7 @@ npx expo run:android
 ## Verified vs. pending
 
 - ✅ JS API + `useGlassesStatus` hook (type-checked; Expo Go fallback works)
-- ✅ `plugins/withGlasses.js` injects Info.plist / pbxproj SwiftPM / Android manifest / Maven repo (confirmed via `expo prebuild`)
-- ⏳ Native compile + runtime — needs a dev build, the Android `read:packages` token, and a physical iPhone + Ray-Ban glasses (the SDK is inert on simulators/emulators).
+- ✅ `plugins/withGlasses.js` injects Info.plist / Android manifest / Maven repo (confirmed via `expo prebuild`)
+- ✅ **iOS dev build compiles and runs** — the module links MWDATCore/MWDATCamera, `Wearables.configure()` succeeds, and the app reports "Glasses not linked" (i.e. the SDK is live; a simulator just has no device to link).
+- ⏳ **Android** compile — needs the `read:packages` token (the Kotlin is ported but unbuilt).
+- ⏳ **End-to-end glasses** — needs a physical iPhone + Ray-Ban glasses paired via the Meta AI app (the SDK can't connect on a simulator/emulator).

@@ -11,13 +11,10 @@ const {
   withInfoPlist,
   withAndroidManifest,
   withProjectBuildGradle,
-  withXcodeProject,
   AndroidConfig,
 } = require('@expo/config-plugins');
 
 const SCHEME = 'supermeta';
-const SPM_URL = 'https://github.com/facebook/meta-wearables-dat-ios';
-const SPM_VERSION = '0.5.0';
 
 // ---- iOS ----
 
@@ -34,50 +31,9 @@ function withIosInfoPlist(config) {
   });
 }
 
-// Best-effort: add the MWDAT SwiftPM package to the app target. pbxproj SPM
-// manipulation is finicky, so on any failure we log the exact manual step
-// instead of producing a broken project.
-function withIosSwiftPackage(config) {
-  return withXcodeProject(config, (c) => {
-    try {
-      const proj = c.modResults;
-      const pkgRef = proj.generateUuid();
-      const products = ['MWDATCore', 'MWDATCamera'];
-
-      proj.hash.project.objects.XCRemoteSwiftPackageReference ||= {};
-      proj.hash.project.objects.XCRemoteSwiftPackageReference[pkgRef] = {
-        isa: 'XCRemoteSwiftPackageReference',
-        repositoryURL: `"${SPM_URL}"`,
-        requirement: { kind: 'exactVersion', version: SPM_VERSION },
-      };
-
-      const target = Object.values(proj.hash.project.objects.PBXNativeTarget).find(
-        (t) => t && typeof t === 'object' && t.productType?.includes('application'),
-      );
-      target.packageProductDependencies ||= [];
-      for (const name of products) {
-        const depId = proj.generateUuid();
-        proj.hash.project.objects.XCSwiftPackageProductDependency ||= {};
-        proj.hash.project.objects.XCSwiftPackageProductDependency[depId] = {
-          isa: 'XCSwiftPackageProductDependency',
-          package: pkgRef,
-          productName: name,
-        };
-        target.packageProductDependencies.push({ value: depId, comment: name });
-      }
-      const rootId = proj.hash.project.rootObject;
-      const root = proj.hash.project.objects.PBXProject[rootId];
-      root.packageReferences ||= [];
-      root.packageReferences.push({ value: pkgRef, comment: 'XCRemoteSwiftPackageReference' });
-    } catch (e) {
-      console.warn(
-        `[withGlasses] Could not auto-add the MWDAT SwiftPM package (${e.message}). ` +
-          `Add it manually in Xcode: File → Add Package Dependencies → ${SPM_URL} @ ${SPM_VERSION} → MWDATCore + MWDATCamera.`,
-      );
-    }
-    return c;
-  });
-}
+// Note: the iOS MWDAT SDK is linked via the module's podspec (vendored xcframeworks
+// in modules/expo-glasses/ios/Frameworks), not here — that puts the SDK in the
+// module target so `import MWDATCore` resolves.
 
 // ---- Android ----
 
@@ -120,7 +76,6 @@ function withAndroidDatRepo(config) {
 
 module.exports = function withGlasses(config) {
   config = withIosInfoPlist(config);
-  config = withIosSwiftPackage(config);
   config = withAndroidGlassesManifest(config);
   config = withAndroidDatRepo(config);
   return config;

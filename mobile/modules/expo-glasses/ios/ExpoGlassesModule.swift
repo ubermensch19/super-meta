@@ -14,22 +14,30 @@ import MWDATCamera
 
 public class ExpoGlassesModule: Module {
   private let core = GlassesCore()
+  // Snapshot cached off the main actor so the synchronous getStatus() can serve it.
+  nonisolated(unsafe) private var lastStatus: [String: Any] = [
+    "isAvailable": false, "registration": "unavailable",
+    "hasActiveDevice": false, "streamState": "stopped",
+  ]
 
   public func definition() -> ModuleDefinition {
     Name("ExpoGlasses")
     Events("onStatus", "onFrame")
 
     OnCreate {
-      self.core.onStatus = { [weak self] status in
-        self?.sendEvent("onStatus", status)
+      Task { @MainActor in
+        self.core.onStatus = { [weak self] status in
+          self?.lastStatus = status
+          self?.sendEvent("onStatus", status)
+        }
+        self.core.onFrame = { [weak self] frame in
+          self?.sendEvent("onFrame", frame)
+        }
+        self.core.configure()
       }
-      self.core.onFrame = { [weak self] frame in
-        self?.sendEvent("onFrame", frame)
-      }
-      self.core.configure()
     }
 
-    Function("getStatus") { self.core.statusDict() }
+    Function("getStatus") { self.lastStatus }
 
     AsyncFunction("startRegistration") { (promise: Promise) in
       Task { @MainActor in self.core.startRegistration(); promise.resolve(nil) }
@@ -38,7 +46,7 @@ public class ExpoGlassesModule: Module {
       Task { @MainActor in self.core.startUnregistration(); promise.resolve(nil) }
     }
     Function("handleUrl") { (url: String) in
-      if let u = URL(string: url) { self.core.handleUrl(u) }
+      Task { @MainActor in if let u = URL(string: url) { self.core.handleUrl(u) } }
     }
     AsyncFunction("startStreaming") { (promise: Promise) in
       Task { @MainActor in await self.core.startStreaming(); promise.resolve(nil) }
@@ -58,6 +66,10 @@ public class ExpoGlassesModule: Module {
 /// Mirrors GlassesService. Kept UI-framework-free so it lives inside the module.
 @MainActor
 final class GlassesCore {
+  // Constructed from the module's nonisolated context; the stored-property
+  // defaults are all trivial, so an empty nonisolated init is safe.
+  nonisolated init() {}
+
   var onStatus: (([String: Any]) -> Void)?
   var onFrame: (([String: Any]) -> Void)?
 
