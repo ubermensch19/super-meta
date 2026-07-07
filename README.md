@@ -14,10 +14,12 @@ A smart-glasses AI assistant for Ray-Ban Meta glasses, built on Meta's Wearables
 ## Project layout
 
 ```
-project.yml                 # XcodeGen spec — source of truth for the Xcode project
-App/                        # app target (entry point, root UI)
-Packages/
-  DesignSystem/             # HUD design tokens + components
+ios/                        # native Swift (SwiftUI) app — the iOS product
+  project.yml               # XcodeGen spec — source of truth for the Xcode project
+  App/                      # app target (entry point, root UI)
+  Packages/
+    DesignSystem/           # HUD design tokens + components
+mobile/                     # React Native (Expo) app — cross-platform shell
 ```
 
 Local packages: `DesignSystem` (HUD theme), `AIProviders` (Gemini/OpenAI/Claude/OpenRouter), `GlassesKit` (DAT SDK wrapper), `RealtimeVoice` (OpenAI Realtime + audio engine), `AgentGateway` (OpenClaw/Hermes node client). The app target hosts the features, settings, persistence, and Siri intents.
@@ -38,6 +40,7 @@ Provider keys are entered in Settings (stored in the Keychain). Vision features 
 ## Build
 
 ```sh
+cd ios
 xcodegen generate          # (re)generate MetaMod.xcodeproj from project.yml
 open MetaMod.xcodeproj      # then set your signing team + Meta credentials
 ```
@@ -51,6 +54,6 @@ Full feature set implemented and building. Validation: app builds + runs (Simula
 Run tests with keys in the environment:
 
 ```sh
-GEMINI_API_KEY=... OPENAI_API_KEY=... (cd Packages/AIProviders && swift test)
-OPENAI_API_KEY=... (cd Packages/RealtimeVoice && swift test)
+GEMINI_API_KEY=... OPENAI_API_KEY=... (cd ios/Packages/AIProviders && swift test)
+OPENAI_API_KEY=... (cd ios/Packages/RealtimeVoice && swift test)
 ```
