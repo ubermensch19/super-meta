@@ -31,11 +31,9 @@ settings:
     MARKETING_VERSION: "0.0.1"
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_VERSION: "6.0"
-    DEVELOPMENT_TEAM: ""
-    # Meta Wearables credentials — fill these in (or override per-config) before
-    # connecting to glasses. Empty is fine for the Phase 0 scaffold build.
-    META_APP_ID: ""
-    CLIENT_TOKEN: ""
+    # DEVELOPMENT_TEAM and the Meta Wearables credentials (META_APP_ID / CLIENT_TOKEN)
+    # live in the gitignored Config/Secrets.xcconfig, wired via the target's
+    # configFiles below so they stay out of source control.
 
 targets:
   MetaMod:
@@ -44,6 +42,9 @@ targets:
     sources:
       - path: App/Sources
       - path: App/Resources/Assets.xcassets
+    configFiles:
+      Debug: Config/Secrets.xcconfig
+      Release: Config/Secrets.xcconfig
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.priyanshu.metamod
