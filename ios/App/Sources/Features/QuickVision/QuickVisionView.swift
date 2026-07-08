@@ -14,6 +14,7 @@ final class QuickVisionViewModel: ObservableObject {
     @Published var image: UIImage?
     @Published var result = ""
     @Published var isAnalyzing = false
+    @Published var isCapturing = false
     @Published var error: String?
 
     func analyze(using providers: ProviderManager, glasses: GlassesService, context: ModelContext) async {
@@ -45,15 +46,30 @@ final class QuickVisionViewModel: ObservableObject {
         }
     }
 
-    /// Pulls a fresh photo from the glasses when available.
+    /// Pulls a fresh photo from the glasses when connected.
     func captureFromGlasses(_ glasses: GlassesService) async {
         guard glasses.isAvailable else { return }
+        // Fail fast with a clear message instead of an 8s timeout when the glasses
+        // aren't actually connected.
+        guard glasses.hasActiveDevice else {
+            error = "Glasses aren't connected. Put them on (or take them out of the case), then try again — or use Choose photo."
+            return
+        }
+        error = nil
+        isCapturing = true
+        defer { isCapturing = false }
         if !glasses.isStreaming { await glasses.startStreaming() }
         do {
             let data = try await glasses.capturePhoto()
             image = UIImage(data: data)
         } catch {
-            self.error = error.localizedDescription
+            // The still-capture can time out before the stream warms up; fall back
+            // to the most recent streamed frame.
+            if let jpeg = glasses.currentFrameJPEG() {
+                image = UIImage(data: jpeg)
+            } else {
+                self.error = "Couldn't get a photo from the glasses. Make sure they're connected, or use Choose photo."
+            }
         }
     }
 }
@@ -133,11 +149,20 @@ struct QuickVisionView: View {
                         .foregroundStyle(Theme.Palette.textMuted)
                     HStack(spacing: Theme.Spacing.md) {
                         if glasses.isAvailable {
-                            Button("Capture") { Task { await vm.captureFromGlasses(glasses) } }
-                                .buttonStyle(.bordered).tint(Theme.Palette.accent)
+                            Button(vm.isCapturing ? "Capturing…" : "Capture") {
+                                Task { await vm.captureFromGlasses(glasses) }
+                            }
+                            .buttonStyle(.bordered).tint(Theme.Palette.accent)
+                            .disabled(vm.isCapturing)
                         }
                         PhotosPicker("Choose photo", selection: $pickerItem, matching: .images)
                             .tint(Theme.Palette.accent)
+                    }
+                    if glasses.isAvailable && !glasses.hasActiveDevice {
+                        Text("Capture uses your glasses camera — connect them first, or choose a photo.")
+                            .font(Theme.Font.readout(12))
+                            .foregroundStyle(Theme.Palette.textMuted)
+                            .multilineTextAlignment(.center)
                     }
                 }
             }
