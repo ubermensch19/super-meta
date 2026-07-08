@@ -47,13 +47,18 @@ struct HomeView: View {
                     }
 
                     section("Connect") {
-                        HStack(spacing: Theme.Spacing.md) {
-                            NavigationLink { GatewayView() } label: {
-                                tile("Agent Link", "OpenClaw · Hermes", "antenna.radiowaves.left.and.right", Theme.Palette.accent)
+                        VStack(spacing: Theme.Spacing.md) {
+                            NavigationLink { HermesView() } label: {
+                                wideCard("Hermes", "Command your agent — tasks, messages, status", "command", Theme.Palette.accent)
                             }.buttonStyle(.plain)
-                            NavigationLink { RTMPStreamView() } label: {
-                                tile("Live Stream", "Broadcast RTMP", "dot.radiowaves.left.and.right", Theme.Palette.live)
-                            }.buttonStyle(.plain)
+                            HStack(spacing: Theme.Spacing.md) {
+                                NavigationLink { GatewayView() } label: {
+                                    tile("Agent Link", "Camera node", "antenna.radiowaves.left.and.right", Theme.Palette.positive)
+                                }.buttonStyle(.plain)
+                                NavigationLink { RTMPStreamView() } label: {
+                                    tile("Live Stream", "Broadcast RTMP", "dot.radiowaves.left.and.right", Theme.Palette.live)
+                                }.buttonStyle(.plain)
+                            }
                         }
                     }
 
