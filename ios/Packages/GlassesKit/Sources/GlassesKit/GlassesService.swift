@@ -198,13 +198,12 @@ public final class GlassesService: ObservableObject {
         let session = DeviceStateSession(deviceSelector: selector)
         deviceStateSession = session
         deviceMonitorTask = Task { @MainActor [weak self] in
+            // Starting the session helps bring the glasses online; connection status
+            // itself is derived from activeDeviceStream (see observeDevice), which is
+            // the signal the working reference app uses.
             try? await session.start()
             while !Task.isCancelled {
-                let connected = (session.state == .running)
-                if let self, self.hasActiveDevice != connected {
-                    self.hasActiveDevice = connected
-                    if connected, self.wantsStreaming, !self.isStreaming { await self.startStreaming() }
-                }
+                NSLog("[Glasses] DeviceStateSession.state=\(String(describing: session.state)) hasActiveDevice=\(self?.hasActiveDevice ?? false)")
                 try? await Task.sleep(nanoseconds: 1_500_000_000)
             }
         }
@@ -230,9 +229,12 @@ public final class GlassesService: ObservableObject {
         deviceTask = Task { @MainActor [weak self] in
             guard let self else { return }
             for await device in selector.activeDeviceStream() {
-                // hasActiveDevice is owned by the DeviceStateSession poll; here we
-                // only auto-resume streaming when the device reappears.
-                if device != nil, self.wantsStreaming, !self.isStreaming {
+                let connected = (device != nil)
+                NSLog("[Glasses] activeDeviceStream connected=\(connected)")
+                // Connection status is owned here — activeDeviceStream is the SDK's
+                // canonical "is a device active" signal (matches the reference app).
+                self.hasActiveDevice = connected
+                if connected, self.wantsStreaming, !self.isStreaming {
                     await self.startStreaming()
                 }
             }
