@@ -49,6 +49,12 @@
 		<string>UIInterfaceOrientationPortrait</string>
 	</array>
 
+	<!-- Keeps the wake-word listener recording while backgrounded / phone locked. -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+	</array>
+
 	<!-- Meta Wearables DAT SDK integration. Credentials come from build settings
 	     META_APP_ID / CLIENT_TOKEN so they stay out of source control. -->
 	<key>MWDAT</key>
@@ -76,5 +82,7 @@
 	<string>Super Meta saves photos captured from your glasses to your library.</string>
 	<key>NSSiriUsageDescription</key>
 	<string>Super Meta uses Siri so you can trigger vision recognition hands-free.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Super Meta listens for your wake phrase so you can start Live AI hands-free through your glasses.</string>
 </dict>
 </plist>

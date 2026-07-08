@@ -44,6 +44,10 @@ final class RealtimeSession: ObservableObject {
         transcript = ""
         userLine = ""
 
+        // The wake-word listener and a live session both want the mic/HFP route;
+        // release the listener while we're connected, revive it on stop().
+        WakeWordListener.shared.pause()
+
         let client = OpenAIRealtimeClient(apiKey: key, config: .init(model: providers.realtimeModel, voice: voice, instructions: instructions, audio: true))
         self.client = client
 
@@ -70,6 +74,7 @@ final class RealtimeSession: ObservableObject {
         client?.disconnect()
         client = nil
         status = .idle
+        WakeWordListener.shared.resume()
     }
 
     private func handle(_ event: RealtimeEvent) {

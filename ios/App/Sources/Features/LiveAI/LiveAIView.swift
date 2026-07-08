@@ -6,7 +6,9 @@ import Inject
 struct LiveAIView: View {
     @EnvironmentObject private var providers: ProviderManager
     @EnvironmentObject private var glasses: GlassesService
-    @StateObject private var session = RealtimeSession()
+    // Shared assistant session (owned by MetaModApp) so this view shows whatever
+    // the session is doing — including a wake-word-started conversation.
+    @EnvironmentObject private var session: RealtimeSession
     @State private var mode: LiveAIMode = .standard
     @ObserveInjection var inject
 
@@ -23,7 +25,8 @@ struct LiveAIView: View {
         .navigationBarTitleDisplayMode(.inline)
         .preferredColorScheme(.dark)
         .enableInjection()
-        .onDisappear { session.stop() }
+        // No onDisappear stop: the session is shared and may have been started by
+        // the wake word. The Stop button and app termination end it.
     }
 
     private var modePicker: some View {
