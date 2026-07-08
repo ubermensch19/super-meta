@@ -32,12 +32,16 @@ private final class WakeAudioEngine: @unchecked Sendable {
     }
 
     private func _start(_ contextual: [String]) {
+        NSLog("[WakeWord] _start begin (queue)")
         _stop(deactivate: false)
-        guard let recognizer, recognizer.isAvailable else { onEnd?(); return }
-        do { try configureSession() } catch { onEnd?(); return }
+        guard let recognizer, recognizer.isAvailable else { NSLog("[WakeWord] recognizer unavailable"); onEnd?(); return }
+        NSLog("[WakeWord] configuring session…")
+        do { try configureSession() } catch { NSLog("[WakeWord] configureSession threw: \(error)"); onEnd?(); return }
+        NSLog("[WakeWord] session configured")
 
         let input = engine.inputNode
         let format = input.inputFormat(forBus: 0)
+        NSLog("[WakeWord] input format \(format.sampleRate)Hz \(format.channelCount)ch")
         // Mic held by a call, or route mid-renegotiation → invalid format. Retry later.
         guard format.sampleRate > 0, format.channelCount > 0 else { onEnd?(); return }
 
@@ -45,6 +49,9 @@ private final class WakeAudioEngine: @unchecked Sendable {
         req.shouldReportPartialResults = true
         req.taskHint = .search
         req.contextualStrings = contextual
+        // On-device wake spotting (matches OpenGlasses): avoids streaming mic audio to
+        // Apple's servers 24/7 and removes the network round-trip from detection.
+        req.requiresOnDeviceRecognition = recognizer.supportsOnDeviceRecognition
         request = req
 
         input.removeTap(onBus: 0) // defensive — a stale tap makes install throw
@@ -53,12 +60,15 @@ private final class WakeAudioEngine: @unchecked Sendable {
         }
 
         engine.prepare()
+        NSLog("[WakeWord] engine.prepare done, starting…")
         do {
             try engine.start()
         } catch {
+            NSLog("[WakeWord] engine.start threw: \(error)")
             input.removeTap(onBus: 0)
             onEnd?(); return
         }
+        NSLog("[WakeWord] engine started, creating recognitionTask")
 
         task = recognizer.recognitionTask(with: req) { [weak self] result, error in
             if let result { self?.onPartial?(result.bestTranscription.formattedString) }
@@ -197,21 +207,38 @@ final class WakeWordListener: ObservableObject {
 
     // MARK: Lifecycle
 
-    /// Begin listening if enabled. Requests speech authorization the first time.
+    /// Begin listening if enabled. Requests microphone AND speech permission first
+    /// (both up front, like OpenGlasses) so starting the audio engine never stalls
+    /// waiting on a permission prompt.
     func start() {
         guard enabled, !listening else { return }
-        SFSpeechRecognizer.requestAuthorization { [weak self] status in
-            Task { @MainActor in
-                guard let self, self.enabled else { return }
-                guard status == .authorized else {
-                    // Permission denied — revert the toggle so Settings reflects reality.
-                    self.enabled = false
-                    return
-                }
-                self.listening = true
-                self.paused = false
-                self.beginRecognition()
+        NSLog("[WakeWord] start() — requesting permissions")
+        Task { @MainActor in
+            let mic = await AVAudioApplication.requestRecordPermission()
+            NSLog("[WakeWord] mic permission = \(mic)")
+            let speech = await Self.requestSpeechAuthorization()
+            NSLog("[WakeWord] speech permission = \(speech)")
+            guard self.enabled else { return }
+            guard mic, speech else {
+                // Permission denied — revert the toggle so Settings reflects reality.
+                self.enabled = false
+                return
             }
+            self.listening = true
+            self.paused = false
+            NSLog("[WakeWord] beginRecognition")
+            self.beginRecognition()
+        }
+    }
+
+    // `nonisolated`: SFSpeechRecognizer.requestAuthorization invokes its handler on a
+    // background queue. If this stayed main-actor-isolated (the default for a static
+    // member of a @MainActor type), Swift 6's runtime executor check would trap when
+    // TCC calls the closure off-main. nonisolated lets the continuation resume from
+    // any thread; the awaiting @MainActor caller still resumes on the main actor.
+    nonisolated private static func requestSpeechAuthorization() async -> Bool {
+        await withCheckedContinuation { continuation in
+            SFSpeechRecognizer.requestAuthorization { continuation.resume(returning: $0 == .authorized) }
         }
     }
 
