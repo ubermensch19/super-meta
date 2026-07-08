@@ -32,16 +32,12 @@ private final class WakeAudioEngine: @unchecked Sendable {
     }
 
     private func _start(_ contextual: [String]) {
-        NSLog("[WakeWord] _start begin (queue)")
         _stop(deactivate: false)
-        guard let recognizer, recognizer.isAvailable else { NSLog("[WakeWord] recognizer unavailable"); onEnd?(); return }
-        NSLog("[WakeWord] configuring session…")
-        do { try configureSession() } catch { NSLog("[WakeWord] configureSession threw: \(error)"); onEnd?(); return }
-        NSLog("[WakeWord] session configured")
+        guard let recognizer, recognizer.isAvailable else { onEnd?(); return }
+        do { try configureSession() } catch { onEnd?(); return }
 
         let input = engine.inputNode
         let format = input.inputFormat(forBus: 0)
-        NSLog("[WakeWord] input format \(format.sampleRate)Hz \(format.channelCount)ch")
         // Mic held by a call, or route mid-renegotiation → invalid format. Retry later.
         guard format.sampleRate > 0, format.channelCount > 0 else { onEnd?(); return }
 
@@ -60,15 +56,12 @@ private final class WakeAudioEngine: @unchecked Sendable {
         }
 
         engine.prepare()
-        NSLog("[WakeWord] engine.prepare done, starting…")
         do {
             try engine.start()
         } catch {
-            NSLog("[WakeWord] engine.start threw: \(error)")
             input.removeTap(onBus: 0)
             onEnd?(); return
         }
-        NSLog("[WakeWord] engine started, creating recognitionTask")
 
         task = recognizer.recognitionTask(with: req) { [weak self] result, error in
             if let result { self?.onPartial?(result.bestTranscription.formattedString) }
@@ -212,12 +205,9 @@ final class WakeWordListener: ObservableObject {
     /// waiting on a permission prompt.
     func start() {
         guard enabled, !listening else { return }
-        NSLog("[WakeWord] start() — requesting permissions")
         Task { @MainActor in
             let mic = await AVAudioApplication.requestRecordPermission()
-            NSLog("[WakeWord] mic permission = \(mic)")
             let speech = await Self.requestSpeechAuthorization()
-            NSLog("[WakeWord] speech permission = \(speech)")
             guard self.enabled else { return }
             guard mic, speech else {
                 // Permission denied — revert the toggle so Settings reflects reality.
@@ -226,7 +216,6 @@ final class WakeWordListener: ObservableObject {
             }
             self.listening = true
             self.paused = false
-            NSLog("[WakeWord] beginRecognition")
             self.beginRecognition()
         }
     }
