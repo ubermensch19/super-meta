@@ -4,16 +4,107 @@ import Speech
 import AVFoundation
 import AudioToolbox
 
+/// Owns the `AVAudioEngine` + `SFSpeechRecognizer` and runs every blocking audio
+/// call (`AVAudioSession.setActive`, `AVAudioEngine.start`, Bluetooth HFP route
+/// negotiation) on a private serial queue, so it never stalls the main thread.
+/// Not main-actor isolated. Detection/lifecycle callbacks fire on the audio thread;
+/// the owner hops them to the main actor.
+private final class WakeAudioEngine: @unchecked Sendable {
+    private let queue = DispatchQueue(label: "com.priyanshu.metamod.wakeword.audio")
+    private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
+    private let engine = AVAudioEngine()
+    private var request: SFSpeechAudioBufferRecognitionRequest?
+    private var task: SFSpeechRecognitionTask?
+
+    /// Partial transcript text; fires on the recognition thread.
+    var onPartial: (@Sendable (String) -> Void)?
+    /// Recognizer finalized or errored, or setup failed → owner should restart.
+    var onEnd: (@Sendable () -> Void)?
+
+    /// (Re)start recognition. Non-blocking: all work happens on the serial queue.
+    func start(contextualStrings: [String]) {
+        queue.async { [weak self] in self?._start(contextualStrings) }
+    }
+
+    /// Tear down recognition; optionally deactivate the shared audio session.
+    func stop(deactivate: Bool = false) {
+        queue.async { [weak self] in self?._stop(deactivate: deactivate) }
+    }
+
+    private func _start(_ contextual: [String]) {
+        _stop(deactivate: false)
+        guard let recognizer, recognizer.isAvailable else { onEnd?(); return }
+        do { try configureSession() } catch { onEnd?(); return }
+
+        let input = engine.inputNode
+        let format = input.inputFormat(forBus: 0)
+        // Mic held by a call, or route mid-renegotiation → invalid format. Retry later.
+        guard format.sampleRate > 0, format.channelCount > 0 else { onEnd?(); return }
+
+        let req = SFSpeechAudioBufferRecognitionRequest()
+        req.shouldReportPartialResults = true
+        req.taskHint = .search
+        req.contextualStrings = contextual
+        request = req
+
+        input.removeTap(onBus: 0) // defensive — a stale tap makes install throw
+        input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak req] buffer, _ in
+            req?.append(buffer)
+        }
+
+        engine.prepare()
+        do {
+            try engine.start()
+        } catch {
+            input.removeTap(onBus: 0)
+            onEnd?(); return
+        }
+
+        task = recognizer.recognitionTask(with: req) { [weak self] result, error in
+            if let result { self?.onPartial?(result.bestTranscription.formattedString) }
+            if error != nil || (result?.isFinal ?? false) { self?.onEnd?() }
+        }
+    }
+
+    private func _stop(deactivate: Bool) {
+        task?.cancel(); task = nil
+        request?.endAudio(); request = nil
+        if engine.isRunning { engine.stop() }
+        // Keep the SAME engine instance — rebuilding it goes deaf after an HFP
+        // renegotiation. Just pull the tap.
+        engine.inputNode.removeTap(onBus: 0)
+        if deactivate {
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        }
+    }
+
+    private func configureSession() throws {
+        let session = AVAudioSession.sharedInstance()
+        // `.mixWithOthers` + `.default` mode keeps the glasses camera stream from
+        // killing the HFP mic; `.defaultToSpeaker` sends the chime out loud.
+        try session.setCategory(
+            .playAndRecord, mode: .default,
+            options: [.mixWithOthers, .allowBluetoothHFP, .allowBluetoothA2DP, .defaultToSpeaker])
+        try session.setActive(true, options: [])
+        // Prefer the glasses' HFP mic when present; else the phone mic.
+        if let hfp = session.availableInputs?.first(where: { $0.portType == .bluetoothHFP }) {
+            try? session.setPreferredInput(hfp)
+        } else {
+            try? session.setPreferredInput(nil)
+        }
+    }
+}
+
 /// Always-on wake-phrase listener. Runs an on-device `SFSpeechRecognizer` over a
 /// dedicated `AVAudioEngine` tap so a user-chosen phrase ("hey neo", "hey vision"…)
 /// can start Live AI hands-free — heard through the glasses' Bluetooth HFP mic when
 /// they're connected, otherwise the phone mic, and while the app is backgrounded /
 /// the phone is locked (the active audio session keeps the app alive).
 ///
-/// The robustness here — restart throttling, format guards, defensive tap removal,
-/// reviving the engine in place on route changes, and route/interruption observers —
-/// is what keeps recognition alive across the flaky 8 kHz HFP link and long
-/// background runs. It mirrors the hard-won handling in the OpenVision reference app.
+/// This object stays on the main actor for its published state and restart timing;
+/// the actual audio work lives in `WakeAudioEngine` on a background queue so enabling
+/// the toggle never freezes the UI. Restart throttling, route/interruption observers,
+/// and recognizer-restart handling keep recognition alive across the flaky HFP link.
 @MainActor
 final class WakeWordListener: ObservableObject {
     static let shared = WakeWordListener()
@@ -42,10 +133,7 @@ final class WakeWordListener: ObservableObject {
     /// Invoked on the main actor when the wake phrase is detected. Set by the app.
     var onWake: (() -> Void)?
 
-    private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
-    private let audioEngine = AVAudioEngine()
-    private var request: SFSpeechAudioBufferRecognitionRequest?
-    private var task: SFSpeechRecognitionTask?
+    private let audio = WakeAudioEngine()
 
     /// True while the user wants us listening (toggle on and not paused).
     private var listening = false
@@ -68,6 +156,17 @@ final class WakeWordListener: ObservableObject {
     private init() {
         self.enabled = defaults.bool(forKey: Keys.enabled)
         self.phrase = defaults.string(forKey: Keys.phrase) ?? "hey vision"
+
+        audio.onPartial = { [weak self] text in
+            Task { @MainActor in self?.evaluate(text) }
+        }
+        audio.onEnd = { [weak self] in
+            Task { @MainActor in
+                guard let self, self.listening, !self.paused else { return }
+                self.scheduleRestart()
+            }
+        }
+
         // AVAudioSession posts these on a background thread. Deliver on the main
         // queue so the main-actor closure body runs on the main actor — otherwise
         // Swift's isolation check (swift_task_isCurrentExecutor) traps and kills the
@@ -88,7 +187,7 @@ final class WakeWordListener: ObservableObject {
             MainActor.assumeIsolated {
                 guard let self, self.listening, !self.paused else { return }
                 switch type {
-                case .began: self.teardownRecognition()
+                case .began: self.audio.stop()
                 case .ended: self.scheduleRestart()
                 default: break
                 }
@@ -120,15 +219,14 @@ final class WakeWordListener: ObservableObject {
     func stop() {
         listening = false
         paused = false
-        teardownRecognition()
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        audio.stop(deactivate: true)
     }
 
     /// Release the mic for a realtime session without forgetting we want to listen.
     func pause() {
         guard listening, !paused else { return }
         paused = true
-        teardownRecognition()
+        audio.stop()
     }
 
     /// Resume listening after a realtime session ends.
@@ -142,69 +240,12 @@ final class WakeWordListener: ObservableObject {
 
     private func beginRecognition() {
         guard listening, !paused else { return }
-        guard let recognizer, recognizer.isAvailable else { scheduleRestart(); return }
-
-        teardownRecognition()
-
-        do {
-            try configureAudioSession()
-        } catch {
-            scheduleRestart(); return
-        }
-
-        let input = audioEngine.inputNode
-        let format = input.inputFormat(forBus: 0)
-        // Mic held by a call, or route mid-renegotiation → invalid format. Retry later.
-        guard format.sampleRate > 0, format.channelCount > 0 else { scheduleRestart(); return }
-
-        let request = SFSpeechAudioBufferRecognitionRequest()
-        request.shouldReportPartialResults = true
-        request.taskHint = .search
-        request.contextualStrings = contextualStrings()
-        self.request = request
-
-        input.removeTap(onBus: 0) // defensive — a stale tap makes install throw
-        input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak request] buffer, _ in
-            request?.append(buffer)
-        }
-
-        audioEngine.prepare()
-        do {
-            try audioEngine.start()
-        } catch {
-            input.removeTap(onBus: 0)
-            scheduleRestart(); return
-        }
-
-        task = recognizer.recognitionTask(with: request) { [weak self] result, error in
-            Task { @MainActor in
-                guard let self else { return }
-                if let result {
-                    let text = result.bestTranscription.formattedString
-                    self.evaluate(text)
-                }
-                if error != nil || (result?.isFinal ?? false) {
-                    // Recognizers finalize after ~1 min (or instantly on flaky HFP);
-                    // just start a fresh one.
-                    if self.listening, !self.paused { self.scheduleRestart() }
-                }
-            }
-        }
+        // Non-blocking: the audio engine does its work on its own queue.
+        audio.start(contextualStrings: contextualStrings())
     }
 
-    private func teardownRecognition() {
-        task?.cancel()
-        task = nil
-        request?.endAudio()
-        request = nil
-        if audioEngine.isRunning { audioEngine.stop() }
-        // Keep the SAME engine instance — rebuilding it goes deaf after an HFP
-        // renegotiation. Just pull the tap.
-        audioEngine.inputNode.removeTap(onBus: 0)
-    }
-
-    /// Throttled restart. Reviving the existing engine in place (rather than
-    /// rebuilding) is what survives glasses connect/disconnect.
+    /// Throttled restart. The audio engine revives in place (rather than rebuilding),
+    /// which is what survives glasses connect/disconnect.
     private func scheduleRestart() {
         guard listening, !paused, !restartScheduled else { return }
         restartScheduled = true
@@ -230,24 +271,6 @@ final class WakeWordListener: ObservableObject {
         onWake?()
     }
 
-    // MARK: Audio session (glasses HFP mic)
-
-    private func configureAudioSession() throws {
-        let session = AVAudioSession.sharedInstance()
-        // `.mixWithOthers` + `.default` mode keeps the glasses camera stream from
-        // killing the HFP mic; `.defaultToSpeaker` sends the chime out loud.
-        try session.setCategory(
-            .playAndRecord, mode: .default,
-            options: [.mixWithOthers, .allowBluetoothHFP, .allowBluetoothA2DP, .defaultToSpeaker])
-        try session.setActive(true, options: [])
-        // Prefer the glasses' HFP mic when present; else the phone mic.
-        if let hfp = session.availableInputs?.first(where: { $0.portType == .bluetoothHFP }) {
-            try? session.setPreferredInput(hfp)
-        } else {
-            try? session.setPreferredInput(nil)
-        }
-    }
-
     /// The phrase plus a few spacing/homophone variants — biasing is the single
     /// biggest reliability lever over the glasses' low-bitrate HFP mic.
     private func contextualStrings() -> [String] {
@@ -261,5 +284,4 @@ final class WakeWordListener: ObservableObject {
         }
         return Array(out)
     }
-
 }
