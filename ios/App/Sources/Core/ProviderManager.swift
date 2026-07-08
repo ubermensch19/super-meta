@@ -35,8 +35,15 @@ final class ProviderManager: ObservableObject {
 
     // MARK: Models
 
+    /// Model ids that only work on non-chat endpoints (Realtime/audio/etc.). If one
+    /// was ever selected for vision, fall back to the vendor's default chat model so
+    /// requests don't 404 with "This is not a chat model."
+    private static let nonChatMarkers = ["realtime", "audio", "tts", "whisper", "embedding", "transcribe", "dall-e", "image"]
+
     func model(for vendor: AIVendor) -> String {
-        models[vendor] ?? vendor.defaultModel
+        let saved = models[vendor] ?? vendor.defaultModel
+        if Self.nonChatMarkers.contains(where: saved.lowercased().contains) { return vendor.defaultModel }
+        return saved
     }
 
     func setModel(_ model: String, for vendor: AIVendor) {
