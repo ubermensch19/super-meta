@@ -43,14 +43,26 @@ final class HermesService: ObservableObject {
         self.api.onAgentEvent = { [weak self] in self?.handleAgentEvent($0) }
     }
 
+    /// Whether the user asked for a live link (drives foreground resync).
+    private var wantsConnection = false
+
     func connect() {
-        guard state == .disconnected || state == .waitingForPairing else { return }
+        wantsConnection = true
+        guard state != .connected, state != .connecting else { return }
         api.connect()
     }
 
     func disconnect() {
+        wantsConnection = false
         api.disconnect()
         failPendingReplies(GatewayError(code: "DISCONNECTED", message: "Gateway connection closed"))
+    }
+
+    /// Backgrounding suspends the socket; reconnect and refresh when we return.
+    func resyncOnForeground() {
+        guard wantsConnection else { return }
+        if state != .connected, state != .connecting { api.connect() }
+        Task { @MainActor [weak self] in await self?.refreshSessions() }
     }
 
     // MARK: Actions

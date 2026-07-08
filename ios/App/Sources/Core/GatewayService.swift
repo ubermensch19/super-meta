@@ -48,6 +48,7 @@ final class GatewayService: ObservableObject, NodeCommandHandler {
     func connect() {
         let config = GatewayConfig(host: host, port: port, useTLS: useTLS, token: token)
         let client = GatewayClient(config: config, identity: identity, handler: self)
+        client.autoReconnect = true
         self.client = client
         stateObservation?.cancel()
         // Mirror the client's published state.
