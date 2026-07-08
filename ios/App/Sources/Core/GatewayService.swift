@@ -16,9 +16,12 @@ final class GatewayService: ObservableObject, NodeCommandHandler {
 
     let nodeID: String
 
+    /// Shared with the operator-role connection (HermesService) so one pairing
+    /// approval covers the device.
+    let identity: DeviceIdentity
+
     private let defaults = UserDefaults.standard
     private let glasses: GlassesService
-    private let identity: DeviceIdentity
     private var client: GatewayClient?
     private var stateObservation: Task<Void, Never>?
 

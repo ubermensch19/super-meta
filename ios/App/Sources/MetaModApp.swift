@@ -7,6 +7,7 @@ struct MetaModApp: App {
     @StateObject private var glasses: GlassesService
     @StateObject private var providers = ProviderManager.shared
     @StateObject private var gateway: GatewayService
+    @StateObject private var hermes: HermesService
     @StateObject private var router = AppRouter.shared
     /// One shared assistant session, used by the wake word AND by `LiveAIView`,
     /// so a wake-started conversation can exist without that screen being open.
@@ -16,8 +17,10 @@ struct MetaModApp: App {
 
     init() {
         let glassesService = GlassesService()
+        let gatewayService = GatewayService(glasses: glassesService)
         _glasses = StateObject(wrappedValue: glassesService)
-        _gateway = StateObject(wrappedValue: GatewayService(glasses: glassesService))
+        _gateway = StateObject(wrappedValue: gatewayService)
+        _hermes = StateObject(wrappedValue: HermesService(gateway: gatewayService))
     }
 
     var body: some Scene {
@@ -26,6 +29,7 @@ struct MetaModApp: App {
                 .environmentObject(glasses)
                 .environmentObject(providers)
                 .environmentObject(gateway)
+                .environmentObject(hermes)
                 .environmentObject(router)
                 .environmentObject(session)
                 .environmentObject(wakeListener)
