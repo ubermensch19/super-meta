@@ -10,9 +10,25 @@ public enum RealtimeEvent: Sendable {
     case userTranscript(String)        // input_audio_transcription
     case assistantTextDelta(String)    // response.audio_transcript.delta / response.text.delta
     case assistantAudioDelta(Data)     // response.audio.delta (PCM16 @ 24k), decoded from base64
+    case responseCreated
     case responseDone
+    case functionCall(name: String, callID: String, argumentsJSON: String)
     case error(String)
     case other(String)
+}
+
+/// A function the model may call. The parameter schema is carried as a JSON
+/// string so the type stays Sendable.
+public struct RealtimeTool: Sendable, Equatable {
+    public var name: String
+    public var description: String
+    public var parametersJSON: String
+
+    public init(name: String, description: String, parametersJSON: String) {
+        self.name = name
+        self.description = description
+        self.parametersJSON = parametersJSON
+    }
 }
 
 public struct RealtimeConfig: Sendable {
@@ -21,17 +37,20 @@ public struct RealtimeConfig: Sendable {
     public var instructions: String
     /// When true the model both listens and speaks; false = text only.
     public var audio: Bool
+    public var tools: [RealtimeTool]
 
     public init(
         model: String = "gpt-realtime",
         voice: String = "alloy",
         instructions: String = "You are a helpful assistant for someone wearing smart glasses. Keep replies brief and spoken-friendly.",
-        audio: Bool = true
+        audio: Bool = true,
+        tools: [RealtimeTool] = []
     ) {
         self.model = model
         self.voice = voice
         self.instructions = instructions
         self.audio = audio
+        self.tools = tools
     }
 }
 
@@ -73,7 +92,7 @@ public final class OpenAIRealtimeClient: @unchecked Sendable {
 
     // MARK: Outgoing
 
-    private func sendSessionUpdate() {
+    func sessionUpdateObject() -> [String: Any] {
         // GA Realtime API schema: session.type = "realtime", output_modalities,
         // nested audio { format, voice }, turn_detection.
         var sessionObj: [String: Any] = [
@@ -85,7 +104,31 @@ public final class OpenAIRealtimeClient: @unchecked Sendable {
             sessionObj["audio"] = ["format": "pcm16", "voice": config.voice]
             sessionObj["turn_detection"] = ["type": "server_vad"]
         }
-        send(["type": "session.update", "session": sessionObj])
+        if !config.tools.isEmpty {
+            sessionObj["tools"] = config.tools.map { tool -> [String: Any] in
+                let parameters = (try? JSONSerialization.jsonObject(with: Data(tool.parametersJSON.utf8))) ?? [:]
+                return ["type": "function", "name": tool.name, "description": tool.description, "parameters": parameters]
+            }
+            sessionObj["tool_choice"] = "auto"
+        }
+        return sessionObj
+    }
+
+    private func sendSessionUpdate() {
+        send(["type": "session.update", "session": sessionUpdateObject()])
+    }
+
+    /// Return a tool result to the model. Follow with `createResponse()` once no
+    /// other response is in flight so the model can speak about the outcome.
+    public func sendFunctionOutput(callID: String, output: String) {
+        send([
+            "type": "conversation.item.create",
+            "item": ["type": "function_call_output", "call_id": callID, "output": output]
+        ])
+    }
+
+    public func createResponse() {
+        send(["type": "response.create"])
     }
 
     /// Append a chunk of PCM16 mic audio (base64-encoded internally).
@@ -157,8 +200,15 @@ public final class OpenAIRealtimeClient: @unchecked Sendable {
             if let delta = json["delta"] as? String { continuation?.yield(.assistantTextDelta(delta)) }
         case "conversation.item.input_audio_transcription.completed":
             if let transcript = json["transcript"] as? String { continuation?.yield(.userTranscript(transcript)) }
+        case "response.created":
+            continuation?.yield(.responseCreated)
         case "response.done":
             continuation?.yield(.responseDone)
+        case "response.function_call_arguments.done":
+            continuation?.yield(.functionCall(
+                name: json["name"] as? String ?? "",
+                callID: json["call_id"] as? String ?? "",
+                argumentsJSON: json["arguments"] as? String ?? "{}"))
         case "error":
             let msg = (json["error"] as? [String: Any])?["message"] as? String ?? "unknown realtime error"
             continuation?.yield(.error(msg))
