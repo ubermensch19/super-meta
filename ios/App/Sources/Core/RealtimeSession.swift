@@ -44,7 +44,7 @@ final class RealtimeSession: ObservableObject {
         transcript = ""
         userLine = ""
 
-        let client = OpenAIRealtimeClient(apiKey: key, config: .init(voice: voice, instructions: instructions, audio: true))
+        let client = OpenAIRealtimeClient(apiKey: key, config: .init(model: providers.realtimeModel, voice: voice, instructions: instructions, audio: true))
         self.client = client
 
         eventTask = Task { [weak self] in
