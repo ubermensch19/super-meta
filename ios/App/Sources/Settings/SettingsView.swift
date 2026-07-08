@@ -10,6 +10,7 @@ struct SettingsView: View {
     @EnvironmentObject private var wakeListener: WakeWordListener
     @Environment(\.dismiss) private var dismiss
     @State private var useCustomModel = false
+    @State private var modelChoice = "gpt-realtime"
     @ObserveInjection var inject
 
     private let customTag = "__custom__"
@@ -36,7 +37,10 @@ struct SettingsView: View {
         }
         .preferredColorScheme(.dark)
         .enableInjection()
-        .onAppear { useCustomModel = !ProviderManager.knownRealtimeModels.contains(providers.realtimeModel) }
+        .onAppear {
+            useCustomModel = !ProviderManager.knownRealtimeModels.contains(providers.realtimeModel)
+            modelChoice = useCustomModel ? customTag : providers.realtimeModel
+        }
     }
 
     private var deviceSection: some View {
@@ -84,11 +88,19 @@ struct SettingsView: View {
 
     private var voiceSection: some View {
         Section {
-            Picker("Realtime model", selection: realtimeSelection) {
+            Picker("Realtime model", selection: $modelChoice) {
                 ForEach(ProviderManager.knownRealtimeModels, id: \.self) { Text($0).tag($0) }
                 Text("Custom").tag(customTag)
             }
             .tint(Theme.Palette.accent)
+            .onChange(of: modelChoice) { _, choice in
+                if choice == customTag {
+                    useCustomModel = true
+                } else {
+                    useCustomModel = false
+                    providers.realtimeModel = choice
+                }
+            }
 
             if useCustomModel {
                 TextField("Model id, e.g. gpt-realtime-2", text: $providers.realtimeModel)
@@ -112,22 +124,6 @@ struct SettingsView: View {
         }
         .listRowBackground(Theme.Palette.surface)
         .foregroundStyle(Theme.Palette.textPrimary)
-    }
-
-    /// Maps the free-form `realtimeModel` onto the curated picker, with a Custom row
-    /// that reveals a text field for any other id.
-    private var realtimeSelection: Binding<String> {
-        Binding(
-            get: { useCustomModel ? customTag : providers.realtimeModel },
-            set: { choice in
-                if choice == customTag {
-                    useCustomModel = true
-                } else {
-                    useCustomModel = false
-                    providers.realtimeModel = choice
-                }
-            }
-        )
     }
 
     private var keysSection: some View {
