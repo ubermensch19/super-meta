@@ -86,7 +86,7 @@ public struct OpenRouterProvider: ChatVisionProvider {
             endpoint: URL(string: "https://openrouter.ai/api/v1/chat/completions")!,
             extraHeaders: [
                 "HTTP-Referer": "https://github.com/priyanshu/meta-mod",
-                "X-Title": "Meta-Mod"
+                "X-Title": "Super Meta"
             ]
         )
     }

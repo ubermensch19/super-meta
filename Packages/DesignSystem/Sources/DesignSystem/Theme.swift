@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Meta-Mod design tokens — a dark, cinematic heads-up-display aesthetic.
+/// Super Meta design tokens — a dark, cinematic heads-up-display aesthetic.
 /// Deliberately distinct: near-black canvas, warm amber signal accent, mono data readouts.
 public enum Theme {
 

@@ -84,7 +84,7 @@ final class GatewayService: ObservableObject, NodeCommandHandler {
                 "streaming": glasses.isStreaming
             ]
         case "device.info":
-            return ["device": "rayban-meta", "app": "Meta-Mod", "platform": "ios", "node": nodeID]
+            return ["device": "rayban-meta", "app": "Super Meta", "platform": "ios", "node": nodeID]
         default:
             throw GatewayError(code: "UNKNOWN_COMMAND", message: method)
         }
