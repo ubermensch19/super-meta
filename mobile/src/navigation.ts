@@ -11,6 +11,7 @@ export type RootStackParamList = {
   LeanEat: undefined;
   LiveTranslate: undefined;
   AgentLink: undefined;
+  AgentSession: undefined;
   LiveStream: undefined;
   Records: undefined;
   Settings: undefined;
