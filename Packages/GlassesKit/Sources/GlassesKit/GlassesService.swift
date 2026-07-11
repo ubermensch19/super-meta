@@ -41,6 +41,16 @@ public enum GlassesVideoQuality: String, Sendable, CaseIterable {
 /// republishes device, stream, frame, and photo events. Features depend on this,
 /// never on the SDK directly.
 ///
+/// Connection persistence: registration with the Meta AI app is persisted by the
+/// SDK across launches, so we only ever *observe* `registrationState` and call
+/// `startRegistration()` on an explicit user tap — the user pairs once, not every
+/// launch. The glasses stay owned by the Meta AI app (a DAT third-party app is a
+/// secondary session consumer, not an exclusive owner); what we can guarantee is
+/// that Super Meta re-acquires its session automatically. When the device drops —
+/// backgrounding, or the Meta app taking over — the session goes `waitingForDevice`;
+/// when it returns (or we re-enter the foreground) we resume without user action,
+/// so there's no manual "reconnect" step during a session.
+///
 /// If the SDK cannot be configured (e.g. running in the Simulator with no Meta
 /// credentials, where there are no glasses anyway), the service degrades to an
 /// `unavailable` state instead of crashing — `isAvailable == false`.
@@ -70,6 +80,13 @@ public final class GlassesService: ObservableObject {
     private var registrationTask: Task<Void, Never>?
     private var isProcessingFrame = false
     private var photoContinuation: CheckedContinuation<Data, Error>?
+
+    /// True while the user intends to be streaming. Drives automatic resume when the
+    /// device reappears or the app returns to the foreground, so no manual reconnect
+    /// is needed. Cleared only by an explicit `stopStreaming()`.
+    private var wantsStreaming = false
+    // Set once on the main actor, read only in the nonisolated deinit for removal.
+    nonisolated(unsafe) private var foregroundToken: NSObjectProtocol?
 
     private static var didConfigure = false
 
@@ -113,13 +130,17 @@ public final class GlassesService: ObservableObject {
         observeRegistration(wearables)
         observeDevice(selector)
         observeSession(session)
+        observeAppLifecycle()
         updateStreamState(session.state)
     }
 
     // MARK: - Registration
 
+    /// Registers the app with the Meta AI app. No-op when already registered or
+    /// mid-flight — registration persists across launches, so this should only ever
+    /// run once per install (on an explicit user tap), never on every launch.
     public func startRegistration() async {
-        guard let wearables, registration != .registering else { return }
+        guard let wearables, registration != .registering, registration != .registered else { return }
         do { try await wearables.startRegistration() }
         catch { setError("Registration failed: \(error.localizedDescription)") }
     }
@@ -160,6 +181,27 @@ public final class GlassesService: ObservableObject {
             guard let self else { return }
             for await device in selector.activeDeviceStream() {
                 self.hasActiveDevice = (device != nil)
+                // Device came back (e.g. the Meta app released it, or the glasses
+                // reconnected). Resume automatically if the user was streaming —
+                // no manual reconnect.
+                if device != nil, self.wantsStreaming, !self.isStreaming {
+                    await self.startStreaming()
+                }
+            }
+        }
+    }
+
+    /// Re-acquire the session when returning to the foreground. Never re-registers
+    /// (registration is already persisted); only resumes an interrupted stream.
+    private func observeAppLifecycle() {
+        foregroundToken = NotificationCenter.default.addObserver(
+            forName: UIApplication.willEnterForegroundNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, self.wantsStreaming, !self.isStreaming else { return }
+                await self.startStreaming()
             }
         }
     }
@@ -168,6 +210,9 @@ public final class GlassesService: ObservableObject {
 
     public func startStreaming() async {
         guard let wearables, let streamSession else { return }
+        // Mark intent up front so an interrupted stream auto-resumes even if the
+        // device isn't ready yet (session parks in `waitingForDevice`).
+        wantsStreaming = true
         do {
             let status = try await wearables.checkPermissionStatus(Permission.camera)
             if status != .granted {
@@ -181,6 +226,8 @@ public final class GlassesService: ObservableObject {
     }
 
     public func stopStreaming() async {
+        // Explicit stop clears intent so we don't auto-resume behind the user's back.
+        wantsStreaming = false
         await streamSession?.stop()
     }
 
@@ -252,6 +299,7 @@ public final class GlassesService: ObservableObject {
     deinit {
         stateToken = nil; frameToken = nil; errorToken = nil; photoToken = nil
         deviceTask?.cancel(); registrationTask?.cancel()
+        if let foregroundToken { NotificationCenter.default.removeObserver(foregroundToken) }
     }
 }
 
