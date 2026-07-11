@@ -14,6 +14,10 @@ public final class GeminiLiveClient: RealtimeClient, @unchecked Sendable {
     private let config: RealtimeConfig
     private let session: URLSession
     private var task: URLSessionWebSocketTask?
+    private let sendLock = NSLock()
+    private var setupComplete = false
+    private var pendingMessages: [[String: Any]] = []
+    private let maxPendingMessageCount = 64
 
     private var continuation: AsyncStream<RealtimeEvent>.Continuation?
     public let events: AsyncStream<RealtimeEvent>
@@ -43,6 +47,10 @@ public final class GeminiLiveClient: RealtimeClient, @unchecked Sendable {
     }
 
     public func disconnect() {
+        sendLock.lock()
+        setupComplete = false
+        pendingMessages.removeAll()
+        sendLock.unlock()
         task?.cancel(with: .goingAway, reason: nil)
         task = nil
         continuation?.finish()
@@ -51,63 +59,118 @@ public final class GeminiLiveClient: RealtimeClient, @unchecked Sendable {
     // MARK: Outgoing
 
     private func sendSetup() {
+        sendImmediately(Self.setupMessage(config: config))
+    }
+
+    static func setupMessage(config: RealtimeConfig) -> [String: Any] {
         let voice = Self.geminiVoices.contains(config.voice) ? config.voice : "Aoede"
         var setup: [String: Any] = [
             "model": "models/\(config.model)",
-            "generation_config": [
-                "response_modalities": ["AUDIO"],
-                "speech_config": ["voice_config": ["prebuilt_voice_config": ["voice_name": voice]]]
+            "generationConfig": [
+                "responseModalities": ["AUDIO"],
+                "speechConfig": ["voiceConfig": ["prebuiltVoiceConfig": ["voiceName": voice]]]
             ],
-            "system_instruction": ["parts": [["text": config.instructions]]],
+            "systemInstruction": ["parts": [["text": Self.groundedInstructions(config.instructions)]]],
             // Enables the transcript stream the UI shows.
-            "input_audio_transcription": [String: Any](),
-            "output_audio_transcription": [String: Any]()
+            "inputAudioTranscription": [String: Any](),
+            "outputAudioTranscription": [String: Any]()
         ]
+        // Google Search is a built-in Live API tool (not a Hermes tool). Keeping it
+        // in every voice session means time-sensitive questions work even when the
+        // user's personal Hermes server is offline or intentionally disconnected.
+        // Gemini's current WebSocket schema uses camelCase for this field.
+        var tools: [[String: Any]] = [["googleSearch": [String: Any]()]]
         if !config.tools.isEmpty {
             let decls = config.tools.map { tool -> [String: Any] in
                 let params = (try? JSONSerialization.jsonObject(with: Data(tool.parametersJSON.utf8))) as? [String: Any] ?? [:]
                 return ["name": tool.name, "description": tool.description, "parameters": params]
             }
-            setup["tools"] = [["function_declarations": decls]]
+            tools.append(["functionDeclarations": decls])
         }
-        send(["setup": setup])
+        setup["tools"] = tools
+        return ["setup": setup]
+    }
+
+    private static func groundedInstructions(_ instructions: String) -> String {
+        """
+        \(instructions)
+
+        For current, factual, or online information, use Google Search before answering. Do not claim you cannot search the web.
+        """
     }
 
     public func appendAudio(_ pcm16: Data) {
-        send(["realtime_input": ["media_chunks": [[
-            "mime_type": "audio/pcm;rate=16000",
-            "data": pcm16.base64EncodedString()
-        ]]]])
+        sendAfterSetup(Self.audioMessage(pcm16))
     }
 
     public func sendImage(_ jpeg: Data, note: String = "") {
-        send(["realtime_input": ["media_chunks": [[
-            "mime_type": "image/jpeg",
-            "data": jpeg.base64EncodedString()
-        ]]]])
+        sendAfterSetup(Self.imageMessage(jpeg))
         if !note.isEmpty { sendText(note) }
     }
 
     public func sendText(_ text: String) {
-        send(["client_content": [
-            "turns": [["role": "user", "parts": [["text": text]]]],
-            "turn_complete": true
-        ]])
+        sendAfterSetup(Self.textMessage(text))
     }
 
     public func sendFunctionOutput(callID: String, output: String) {
         let responseObj = (try? JSONSerialization.jsonObject(with: Data(output.utf8))) as? [String: Any] ?? ["result": output]
-        send(["tool_response": ["function_responses": [[
-            "id": callID,
-            "response": responseObj
-        ]]]])
+        sendAfterSetup(Self.toolResponseMessage(callID: callID, response: responseObj))
     }
 
     // Gemini auto-responds after a tool_response / client_content turn, so there's
     // no explicit "create response" call.
     public func createResponse() {}
 
-    private func send(_ object: [String: Any]) {
+    static func audioMessage(_ pcm16: Data) -> [String: Any] {
+        ["realtimeInput": ["audio": [
+            "mimeType": "audio/pcm;rate=16000",
+            "data": pcm16.base64EncodedString()
+        ]]]
+    }
+
+    static func imageMessage(_ jpeg: Data) -> [String: Any] {
+        ["realtimeInput": ["video": [
+            "mimeType": "image/jpeg",
+            "data": jpeg.base64EncodedString()
+        ]]]
+    }
+
+    static func textMessage(_ text: String) -> [String: Any] {
+        ["realtimeInput": ["text": text]]
+    }
+
+    static func toolResponseMessage(callID: String, response: [String: Any]) -> [String: Any] {
+        ["toolResponse": ["functionResponses": [[
+            "id": callID,
+            "response": response
+        ]]]]
+    }
+
+    /// The Live API rejects any input sent before it acknowledges setup. Mic taps
+    /// begin immediately, so hold those chunks until `setupComplete` arrives.
+    private func sendAfterSetup(_ object: [String: Any]) {
+        sendLock.lock()
+        guard setupComplete else {
+            // A rejected or stalled setup must not retain unbounded microphone data.
+            if pendingMessages.count == maxPendingMessageCount { pendingMessages.removeFirst() }
+            pendingMessages.append(object)
+            sendLock.unlock()
+            return
+        }
+        sendLock.unlock()
+        sendImmediately(object)
+    }
+
+    private func flushPendingMessages() {
+        sendLock.lock()
+        setupComplete = true
+        let pending = pendingMessages
+        pendingMessages.removeAll()
+        sendLock.unlock()
+        pending.forEach(sendImmediately)
+    }
+
+    private func sendImmediately(_ object: [String: Any]) {
         guard let data = try? JSONSerialization.data(withJSONObject: object),
               let string = String(data: data, encoding: .utf8) else { return }
         task?.send(.string(string)) { error in
@@ -140,18 +203,19 @@ public final class GeminiLiveClient: RealtimeClient, @unchecked Sendable {
         }
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
 
-        if json["setupComplete"] != nil || json["setup_complete"] != nil {
+        if json["setupComplete"] != nil {
+            flushPendingMessages()
             continuation?.yield(.sessionCreated)
             return
         }
 
-        if let server = json["serverContent"] as? [String: Any] ?? json["server_content"] as? [String: Any] {
+        if let server = json["serverContent"] as? [String: Any] {
             handleServerContent(server)
             return
         }
 
-        if let toolCall = json["toolCall"] as? [String: Any] ?? json["tool_call"] as? [String: Any] {
-            let calls = toolCall["functionCalls"] as? [[String: Any]] ?? toolCall["function_calls"] as? [[String: Any]] ?? []
+        if let toolCall = json["toolCall"] as? [String: Any] {
+            let calls = toolCall["functionCalls"] as? [[String: Any]] ?? []
             for call in calls {
                 let name = call["name"] as? String ?? ""
                 let id = call["id"] as? String ?? name
@@ -169,10 +233,10 @@ public final class GeminiLiveClient: RealtimeClient, @unchecked Sendable {
     }
 
     private func handleServerContent(_ content: [String: Any]) {
-        if let modelTurn = content["modelTurn"] as? [String: Any] ?? content["model_turn"] as? [String: Any],
+        if let modelTurn = content["modelTurn"] as? [String: Any],
            let parts = modelTurn["parts"] as? [[String: Any]] {
             for part in parts {
-                if let inline = part["inlineData"] as? [String: Any] ?? part["inline_data"] as? [String: Any],
+                if let inline = part["inlineData"] as? [String: Any],
                    let b64 = inline["data"] as? String, let audio = Data(base64Encoded: b64) {
                     continuation?.yield(.assistantAudioDelta(audio))
                 }
@@ -181,15 +245,15 @@ public final class GeminiLiveClient: RealtimeClient, @unchecked Sendable {
                 }
             }
         }
-        if let out = content["outputTranscription"] as? [String: Any] ?? content["output_transcription"] as? [String: Any],
+        if let out = content["outputTranscription"] as? [String: Any],
            let text = out["text"] as? String, !text.isEmpty {
             continuation?.yield(.assistantTextDelta(text))
         }
-        if let inp = content["inputTranscription"] as? [String: Any] ?? content["input_transcription"] as? [String: Any],
+        if let inp = content["inputTranscription"] as? [String: Any],
            let text = inp["text"] as? String, !text.isEmpty {
             continuation?.yield(.userTranscript(text))
         }
-        if (content["turnComplete"] as? Bool ?? content["turn_complete"] as? Bool) == true {
+        if content["turnComplete"] as? Bool == true {
             continuation?.yield(.responseDone)
         }
     }

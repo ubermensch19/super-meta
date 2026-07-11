@@ -145,9 +145,22 @@ public final class GlassesService: ObservableObject {
     /// mid-flight — registration persists across launches, so this should only ever
     /// run once per install (on an explicit user tap), never on every launch.
     public func startRegistration() async {
-        guard let wearables, registration != .registering, registration != .registered else { return }
-        do { try await wearables.startRegistration() }
-        catch { setError("Registration failed: \(error.localizedDescription)") }
+        guard let wearables else {
+            setError("Glasses SDK is unavailable")
+            return
+        }
+        guard registration != .registering, registration != .registered else {
+            log.info("Ignoring registration request; state is already \(String(describing: self.registration))")
+            return
+        }
+        log.info("Starting Meta AI DAT registration handoff")
+        do {
+            try await wearables.startRegistration()
+            log.info("Meta AI DAT registration handoff started")
+        } catch {
+            log.error("Meta AI DAT registration failed: \(String(describing: error))")
+            setError("Registration failed: \(error.localizedDescription)")
+        }
     }
 
     /// Unlinks the app from the glasses (the connect toggle turned off).
@@ -164,9 +177,15 @@ public final class GlassesService: ObservableObject {
         guard let wearables else { return }
         let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
         guard components?.queryItems?.contains(where: { $0.name == "metaWearablesAction" }) == true else { return }
+        log.info("Received Meta AI DAT callback URL")
         Task { @MainActor in
-            do { _ = try await wearables.handleUrl(url) }
-            catch { setError("Couldn't finish connecting: \(error.localizedDescription)") }
+            do {
+                let handled = try await wearables.handleUrl(url)
+                log.info("Meta AI DAT callback handled=\(handled)")
+            } catch {
+                log.error("Meta AI DAT callback failed: \(String(describing: error))")
+                setError("Couldn't finish connecting: \(error.localizedDescription)")
+            }
         }
     }
 

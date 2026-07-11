@@ -1,59 +1,163 @@
 # Super Meta
 
-A smart-glasses AI assistant for Ray-Ban Meta glasses, built on Meta's Wearables DAT SDK. Multimodal vision and real-time voice, powered by your choice of OpenAI, Anthropic Claude, or OpenRouter, with optional connection to OpenClaw / Hermes agent gateways.
+### A hands-free, Gemini-powered copilot for Ray-Ban Meta glasses.
 
-> "Meta" is a trademark of Meta Platforms — `Super Meta` is a working name for development only and must be renamed before any public distribution.
+**See the moment. Ask naturally. Act through your agent.**
 
-## Requirements
+[![Platform](https://img.shields.io/badge/platform-iOS%2017%2B-111827?style=flat-square&logo=apple&logoColor=white)](#requirements)
+[![Language](https://img.shields.io/badge/language-Swift%206-F97316?style=flat-square&logo=swift&logoColor=white)](#architecture)
+[![AI](https://img.shields.io/badge/realtime-Gemini%20Live-4285F4?style=flat-square&logo=google&logoColor=white)](#the-experience)
+[![Glasses](https://img.shields.io/badge/wearables-Ray--Ban%20Meta-1D1D1F?style=flat-square)](#requirements)
 
-- Xcode 16+ (built with Xcode 26.6, Swift 6)
-- iOS 17+ device
-- [XcodeGen](https://github.com/yonyz/XcodeGen) (`brew install xcodegen`) — the project is generated from `project.yml`
-- Ray-Ban Meta glasses (firmware v20+, DAT SDK Preview Mode enabled) for on-device features
+Built for the [Google DeepMind Bangalore Hackathon](https://cerebralvalley.ai/e/google-deepmind-bangalore-hackathon/details), Super Meta turns the glasses camera, microphone, and a personal agent into one continuous interface. Say **"Hey Gemini"**, look at the world, and keep moving.
 
-## Project layout
+> `Super Meta` is a development codename. "Meta" is a trademark of Meta Platforms; rename the project before public distribution.
 
+## Story
+
+Meta's default Llama experience did not meet the bar for accuracy, speed, or depth of knowledge. I wanted my glasses to feel less like a novelty assistant and more like an always-available interface to the best models and the tools I already use.
+
+So I reverse-engineered the integration path and brought **Gemini Live** into the glasses experience. Then I connected **my Hermes agent**, turning a voice-and-vision assistant into an interface that can understand context and take action.
+
+Now the glasses can do much more than answer a question:
+
+| Ask | What Super Meta can do |
+| --- | --- |
+| **"What were the key points from my last meeting?"** | Recall and summarize meeting context through Hermes. |
+| **"What's the best way to get there?"** | Find and explain the best available route to a destination. |
+| **"Handle this for me."** | Control Hermes to carry out an open-ended range of connected agent tasks. |
+
+## The Experience
+
+| Moment | What happens |
+| --- | --- |
+| **Hands-free live help** | "Hey Gemini" starts a Gemini Live conversation with voice and optional glasses-camera context. |
+| **Look, then understand** | Capture a scene for quick recognition, open-ended visual Q&A, or food and nutrition analysis. |
+| **Talk across languages** | Run speech-to-speech live translation across 11 languages. |
+| **Put an agent in the loop** | Pair Hermes so the assistant can run tasks, send messages, recall context, and report status. |
+| **Keep a record** | Vision results are stored locally with SwiftData. |
+| **Broadcast what you see** | Stream the glasses camera over RTMP to YouTube, Twitch, or a custom endpoint. |
+
+The iOS home is deliberately focused on **Live AI**, connection, and records. Supporting features remain available through their existing routes and Siri shortcuts.
+
+## Why It Feels Different
+
+Most assistants wait for a prompt. Super Meta is designed around the moment before a prompt exists: the thing in front of you, the context from your day, the task you are already doing, and the answer or action you need without pulling out your phone.
+
+```mermaid
+flowchart LR
+    G[Ray-Ban Meta glasses] -->|camera + microphone| I[iOS app]
+    I -->|Hey Gemini| W[Wake-word listener]
+    W --> R[Gemini Live]
+    I -->|image + prompt| V[Vision providers]
+    R -->|tool calls| A[Hermes / OpenClaw]
+    A -->|results| R
+    R -->|voice + UI| U[Wearer]
 ```
-ios/                        # native Swift (SwiftUI) app — the iOS product
-  project.yml               # XcodeGen spec — source of truth for the Xcode project
-  App/                      # app target (entry point, root UI)
-  Packages/
-    DesignSystem/           # HUD design tokens + components
-android/                    # React Native (Expo) app — Android build
+
+## Architecture
+
+```text
+ios/
+├── App/                         SwiftUI application and feature screens
+│   ├── Sources/Core/             session, wake word, routing, persistence
+│   ├── Sources/Features/         Live AI, vision, translation, gateway, RTMP
+│   └── Sources/Home/             focused home experience
+└── Packages/
+    ├── AIProviders/              Gemini, OpenAI, Anthropic, OpenRouter vision clients
+    ├── GlassesKit/               Meta Wearables DAT integration
+    ├── RealtimeVoice/            Gemini Live and OpenAI Realtime clients + audio
+    ├── AgentGateway/             OpenClaw / Hermes WebSocket node client
+    └── DesignSystem/             NEURA visual system and shared components
 ```
 
-Local packages: `DesignSystem` (HUD theme), `AIProviders` (Gemini/OpenAI/Claude/OpenRouter), `GlassesKit` (DAT SDK wrapper), `RealtimeVoice` (OpenAI Realtime + audio engine), `AgentGateway` (OpenClaw/Hermes node client). The app target hosts the features, settings, persistence, and Siri intents.
+### Core stack
 
-## Features
+- **SwiftUI + Swift 6** for a native, responsive iOS experience.
+- **Meta Wearables DAT SDK** for Ray-Ban Meta registration, camera, and device state.
+- **Gemini Live** as the default low-latency voice runtime.
+- **Gemini, OpenAI, Anthropic, and OpenRouter** for selectable vision workflows.
+- **Hermes / OpenClaw** for agentic actions over a paired gateway.
+- **SwiftData** for on-device vision history and **HaishinKit** for RTMP streaming.
 
-- **Live AI** — real-time voice conversation (OpenAI Realtime GA) with optional glasses-frame context; Chat/Guide/Assist modes
-- **Live Translate** — speech-to-speech translation across 11 languages
-- **Quick Vision** — image recognition with 7 modes; Siri-triggerable
-- **Vision Chat** — free-form Q&A about an image
-- **LeanEat** — food/nutrition analysis
-- **Agent Link** — connect the glasses as a node to OpenClaw or Hermes gateways
-- **Live Stream** — broadcast the glasses camera over RTMP (YouTube/Twitch/custom)
-- **Records** — SwiftData history of vision results
+## Get Running
 
-Provider keys are entered in Settings (stored in the Keychain). Vision features use your selected provider; realtime voice uses OpenAI. When no glasses are connected (e.g. Simulator), vision features fall back to a photo picker.
+### Requirements
 
-## Build
+- macOS with **Xcode 16+** and the iOS 17 SDK
+- **XcodeGen**: `brew install xcodegen`
+- An iPhone running **iOS 17+**
+- Ray-Ban Meta glasses with firmware v20+ and DAT SDK Preview Mode for glasses features
+- A Gemini API key for Live AI; provider keys for optional vision features
+
+### 1. Configure local secrets
+
+Create `ios/Config/Secrets.xcconfig`. This file is intentionally ignored by Git.
+
+```xcconfig
+DEVELOPMENT_TEAM = YOUR_APPLE_TEAM_ID
+META_APP_ID = YOUR_META_APP_ID
+CLIENT_TOKEN = YOUR_META_CLIENT_TOKEN
+```
+
+Set API keys from the app’s Settings screen. They are stored in the iOS Keychain. The simulator can exercise image workflows through the photo picker, but glasses capture and hands-free audio require a real device.
+
+### 2. Generate and open the project
 
 ```sh
 cd ios
-xcodegen generate          # (re)generate MetaMod.xcodeproj from project.yml
-open MetaMod.xcodeproj      # then set your signing team + Meta credentials
+xcodegen generate
+open MetaMod.xcodeproj
 ```
 
-Meta credentials (`META_APP_ID`, `CLIENT_TOKEN`) and `DEVELOPMENT_TEAM` are build settings — fill them in `project.yml` or override in Xcode. The `.xcodeproj` is git-ignored; regenerate it with `xcodegen generate`.
+Select your signing team, choose a connected iPhone, and run the `MetaMod` scheme. The generated `.xcodeproj` is not source-controlled; `project.yml` is the source of truth.
 
-## Status
-
-Full feature set implemented and building. Validation: app builds + runs (Simulator); live provider/realtime/gateway tests green (`AIProviders` 7/7, `AgentGateway` 6/6, `RealtimeVoice` 1/1). Glasses camera/photo/mic, RTMP, and a live OpenClaw/Hermes gateway require on-device verification with Meta credentials.
-
-Run tests with keys in the environment:
+### 3. Verify a build
 
 ```sh
-GEMINI_API_KEY=... OPENAI_API_KEY=... (cd ios/Packages/AIProviders && swift test)
-OPENAI_API_KEY=... (cd ios/Packages/RealtimeVoice && swift test)
+xcodebuild \
+  -project ios/MetaMod.xcodeproj \
+  -scheme MetaMod \
+  -destination 'generic/platform=iOS Simulator' \
+  CODE_SIGNING_ALLOWED=NO \
+  build
 ```
+
+## Development Notes
+
+### Wake word and realtime voice
+
+The wake listener hands the microphone to Gemini Live when it hears "Hey Gemini," then resumes listening after the session ends. On glasses, this uses the Bluetooth HFP microphone. It is enabled by default and can be changed in Settings.
+
+### Vision providers
+
+Vision features use the provider selected in Settings. Live AI uses Gemini Live. The app intentionally keeps these paths separate so a user can choose the right vision model without changing their realtime voice experience.
+
+### Agent connectivity
+
+Pair a Hermes or OpenClaw endpoint from the Hermes screen. Once connected, Gemini Live can invoke the narrow agent tools exposed by the app, while the glasses remain a node the gateway can query for camera and device status.
+
+## Test Packages
+
+Package tests use real API keys only for optional live checks; tests skip those checks when a key is not present.
+
+```sh
+cd ios/Packages/AIProviders && swift test
+cd ios/Packages/RealtimeVoice && swift test
+cd ios/Packages/AgentGateway && swift test
+```
+
+To include live provider checks, supply the appropriate environment variable before running the relevant package test:
+
+```sh
+GEMINI_API_KEY=... swift test
+OPENAI_API_KEY=... swift test
+```
+
+## Project Layout
+
+`ios/` is the native product. `android/` contains a separate React Native/Expo implementation and is not part of the iOS build.
+
+## License and Trademarks
+
+This repository does not grant rights to Meta Platforms, Ray-Ban, Google, Gemini, OpenAI, Anthropic, OpenRouter, OpenClaw, or Hermes trademarks, SDKs, or services. Follow each provider’s terms and the Meta Wearables DAT program requirements before shipping.

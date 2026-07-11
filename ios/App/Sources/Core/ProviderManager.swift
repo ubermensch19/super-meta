@@ -23,8 +23,11 @@ final class ProviderManager: ObservableObject {
         didSet { defaults.set(realtimeModel, forKey: Keys.realtimeModel) }
     }
 
-    /// Curated realtime model ids offered in Settings; a custom id can also be typed.
-    static let knownRealtimeModels = ["gemini-3.1-flash-live-preview", "gemini-2.5-flash-native-audio-latest", "gemini-3.5-live-translate-preview", "gpt-realtime", "gpt-realtime-2"]
+    /// Default realtime model — the current Gemini Live model for real-time dialogue.
+    static let defaultRealtimeModel = "gemini-3.1-flash-live-preview"
+
+    /// Curated Gemini Live models offered in Settings.
+    static let knownRealtimeModels = ["gemini-3.1-flash-live-preview", "gemini-2.5-flash-native-audio-preview-12-2025"]
 
     /// Per-vendor selected model id.
     @Published private(set) var models: [AIVendor: String]
@@ -41,13 +44,15 @@ final class ProviderManager: ObservableObject {
     private init() {
         let savedVendor = defaults.string(forKey: Keys.visionVendor).flatMap(AIVendor.init) ?? .gemini
         self.visionVendor = savedVendor
-        let savedRealtimeVendor = defaults.string(forKey: Keys.realtimeVendor).flatMap(AIVendor.init) ?? .gemini
-        self.realtimeVendor = savedRealtimeVendor
-        var rtModel = defaults.string(forKey: Keys.realtimeModel) ?? "gemini-2.5-flash-native-audio-latest"
-        // Keep the model consistent with the vendor so a value persisted before the
-        // Gemini switch (e.g. "gpt-realtime-2") can't pair with the Gemini client.
-        if savedRealtimeVendor == .gemini, !rtModel.lowercased().contains("gemini") {
-            rtModel = "gemini-2.5-flash-native-audio-latest"
+        // Live AI is Gemini Live only. Do not let a persisted legacy selection
+        // silently route a wake-triggered conversation somewhere else.
+        let savedRealtimeVendor: AIVendor = .gemini
+        self.realtimeVendor = .gemini
+        defaults.set(AIVendor.gemini.rawValue, forKey: Keys.realtimeVendor)
+        var rtModel = defaults.string(forKey: Keys.realtimeModel) ?? Self.defaultRealtimeModel
+        // Reset any stale/non-Gemini value (e.g. an old "gpt-realtime-2") to the default.
+        if savedRealtimeVendor == .gemini, !Self.knownRealtimeModels.contains(rtModel) {
+            rtModel = Self.defaultRealtimeModel
         } else if savedRealtimeVendor == .openAI, rtModel.lowercased().contains("gemini") {
             rtModel = "gpt-realtime"
         }
