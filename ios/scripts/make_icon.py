@@ -13,10 +13,12 @@ from pathlib import Path
 
 from PIL import Image, ImageFilter
 
-ROOT = Path(__file__).resolve().parent.parent
-SRC = ROOT / ".context/attachments/B7i1jD/image.png"
-ICON_OUT = ROOT / "App/Resources/Assets.xcassets/AppIcon.appiconset/icon-1024.png"
-MARK_OUT = ROOT / "App/Resources/Assets.xcassets/Logomark.imageset/logomark.png"
+# scripts/ lives inside the Swift app folder (ios/); the source art lives at the repo root.
+IOS_DIR = Path(__file__).resolve().parent.parent
+REPO_ROOT = IOS_DIR.parent
+SRC = REPO_ROOT / ".context/attachments/B7i1jD/image.png"
+ICON_OUT = IOS_DIR / "App/Resources/Assets.xcassets/AppIcon.appiconset/icon-1024.png"
+MARK_OUT = IOS_DIR / "App/Resources/Assets.xcassets/Logomark.imageset/logomark.png"
 
 # A pixel counts as background when every channel is this bright or above.
 WHITE_CUTOFF = 244
