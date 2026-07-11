@@ -7,14 +7,19 @@ import Inject
 struct SettingsView: View {
     @EnvironmentObject private var providers: ProviderManager
     @EnvironmentObject private var glasses: GlassesService
+    @EnvironmentObject private var wakeListener: WakeWordListener
     @Environment(\.dismiss) private var dismiss
+    @State private var useCustomModel = false
     @ObserveInjection var inject
+
+    private let customTag = "__custom__"
 
     var body: some View {
         NavigationStack {
             List {
                 deviceSection
                 providerSection
+                voiceSection
                 keysSection
                 aboutSection
             }
@@ -31,6 +36,7 @@ struct SettingsView: View {
         }
         .preferredColorScheme(.dark)
         .enableInjection()
+        .onAppear { useCustomModel = !ProviderManager.knownRealtimeModels.contains(providers.realtimeModel) }
     }
 
     private var deviceSection: some View {
@@ -69,11 +75,59 @@ struct SettingsView: View {
                 }
             }
         } header: { sectionHeader("AI Provider") } footer: {
-            Text("Used for image recognition and chat. Realtime voice uses OpenAI.")
+            Text("Used for image recognition and chat. Realtime voice uses OpenAI — pick its model under Voice.")
                 .foregroundStyle(Theme.Palette.textMuted)
         }
         .listRowBackground(Theme.Palette.surface)
         .foregroundStyle(Theme.Palette.textPrimary)
+    }
+
+    private var voiceSection: some View {
+        Section {
+            Picker("Realtime model", selection: realtimeSelection) {
+                ForEach(ProviderManager.knownRealtimeModels, id: \.self) { Text($0).tag($0) }
+                Text("Custom").tag(customTag)
+            }
+            .tint(Theme.Palette.accent)
+
+            if useCustomModel {
+                TextField("Model id, e.g. gpt-realtime-2", text: $providers.realtimeModel)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .foregroundStyle(Theme.Palette.textPrimary)
+            }
+
+            Toggle("Wake word", isOn: $wakeListener.enabled)
+                .tint(Theme.Palette.accent)
+
+            if wakeListener.enabled {
+                TextField("Wake phrase, e.g. hey neo", text: $wakeListener.phrase)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .foregroundStyle(Theme.Palette.textPrimary)
+            }
+        } header: { sectionHeader("Voice") } footer: {
+            Text("Say the wake phrase to start Live AI hands-free on your selected model — through the glasses when connected, even with the phone locked. Keeps the mic active; uses more battery. Camera context pauses while the app is in the background.")
+                .foregroundStyle(Theme.Palette.textMuted)
+        }
+        .listRowBackground(Theme.Palette.surface)
+        .foregroundStyle(Theme.Palette.textPrimary)
+    }
+
+    /// Maps the free-form `realtimeModel` onto the curated picker, with a Custom row
+    /// that reveals a text field for any other id.
+    private var realtimeSelection: Binding<String> {
+        Binding(
+            get: { useCustomModel ? customTag : providers.realtimeModel },
+            set: { choice in
+                if choice == customTag {
+                    useCustomModel = true
+                } else {
+                    useCustomModel = false
+                    providers.realtimeModel = choice
+                }
+            }
+        )
     }
 
     private var keysSection: some View {
