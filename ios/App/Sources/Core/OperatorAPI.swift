@@ -52,14 +52,14 @@ func sessionKeysMatch(_ a: String, _ b: String) -> Bool {
 
 // MARK: - Wire methods
 
-/// Gateway RPC names used by the operator connection, isolated here so protocol
-/// drift only touches this file.
+/// Hermes backend JSON-RPC method names, isolated here so protocol drift only
+/// touches this file. Verified against `hermes serve` (Hermes Agent 0.18.x).
 enum OperatorMethod {
-    static let chatSend = "chat.send"
-    static let chatAbort = "chat.abort"
-    static let sessionsList = "sessions.list"
-    static let sessionsCreate = "sessions.create"
-    static let channelSend = "send"
+    static let sessionCreate = "session.create"
+    static let sessionList = "session.list"
+    static let sessionResume = "session.resume"
+    static let promptSubmit = "prompt.submit"
+    static let sessionInterrupt = "session.interrupt"
 }
 
 // MARK: - Protocol
@@ -83,32 +83,34 @@ protocol OperatorAPI: AnyObject {
     func channelSend(channel: String, to: String, text: String) async throws
 }
 
-// MARK: - Gateway implementation
+// MARK: - Hermes API-server implementation
 
+/// Delegates Gemini requests to Hermes' authenticated OpenAI-compatible API.
+/// Hermes then executes its own configured tools and connected integrations.
 @MainActor
-final class GatewayOperatorAPI: OperatorAPI {
+final class HermesOperatorAPI: OperatorAPI {
     var onStateChange: ((GatewayConnectionState) -> Void)?
     var onAgentEvent: ((OperatorAgentEvent) -> Void)?
 
-    private let identity: DeviceIdentity
-    private let configProvider: () -> GatewayConfig
-    private var client: GatewayClient?
-    private var stateObservation: Task<Void, Never>?
+    /// Sentinel meaning "the current conversation" (as opposed to a stored id).
+    static let activeSessionKey = "main"
 
-    init(identity: DeviceIdentity, configProvider: @escaping () -> GatewayConfig) {
-        self.identity = identity
+    private let configProvider: () -> HermesConfig
+    private var client: HermesHTTPClient?
+    private var stateObservation: Task<Void, Never>?
+    private var activeSessionID: String?
+
+    init(configProvider: @escaping () -> HermesConfig) {
         self.configProvider = configProvider
     }
 
     func connect() {
+        // Idempotent: a launch-time auto-connect and a scenePhase resync can race;
+        // don't tear down a live/in-flight socket and orphan its requests.
+        if let existing = client, existing.state == .connecting || existing.state == .connected { return }
         disconnect()
-        let client = GatewayClient(config: configProvider(), identity: identity, options: .operator)
-        client.autoReconnect = true
-        client.setDeviceToken(KeychainStore.get("gateway_device_token"))
-        client.onDeviceToken = { KeychainStore.set($0, for: "gateway_device_token") }
-        client.onEvent = { [weak self] event, payload in
-            self?.handleEvent(event, payload: payload)
-        }
+        activeSessionID = nil
+        let client = HermesHTTPClient(config: configProvider())
         self.client = client
         stateObservation?.cancel()
         stateObservation = Task { @MainActor [weak self] in
@@ -124,12 +126,13 @@ final class GatewayOperatorAPI: OperatorAPI {
         stateObservation?.cancel(); stateObservation = nil
         client?.disconnect()
         client = nil
+        activeSessionID = nil
         onStateChange?(.disconnected)
     }
 
     func ensureConnected() async throws {
         if client == nil { connect() }
-        guard let client else { throw GatewayError(code: "DISCONNECTED", message: "No gateway client") }
+        guard let client else { throw GatewayError(code: "DISCONNECTED", message: "No Hermes client") }
         if client.state != .connected {
             if client.state == .disconnected { client.connect() }
             try await client.waitUntilConnected()
@@ -137,108 +140,68 @@ final class GatewayOperatorAPI: OperatorAPI {
     }
 
     func chatSend(sessionKey: String, text: String) async throws -> String {
+        try await ensureConnected()
         let runID = UUID().uuidString
-        _ = try await requireClient().request(method: OperatorMethod.chatSend, params: [
-            "sessionKey": sessionKey,
-            "message": text,
-            "deliver": false,
-            "idempotencyKey": runID
-        ])
+        let stableSessionKey = sessionKey == Self.activeSessionKey ? "metamod:voice" : sessionKey
+        let client = try requireClient()
+        let sessionID = activeSessionID
+        Task { @MainActor [weak self] in
+            do {
+                let reply = try await client.chat(text: text, sessionID: sessionID, sessionKey: stableSessionKey)
+                self?.activeSessionID = reply.sessionID ?? sessionID
+                // Register HermesService's reply continuation before delivering
+                // an unusually fast HTTP response.
+                await Task.yield()
+                self?.onAgentEvent?(.replyFinal(sessionKey: runID, runID: runID, text: reply.text))
+            } catch let error as GatewayError {
+                self?.onAgentEvent?(.replyFailed(sessionKey: runID, runID: runID, message: error.message))
+            } catch {
+                self?.onAgentEvent?(.replyFailed(sessionKey: runID, runID: runID, message: error.localizedDescription))
+            }
+        }
         return runID
     }
 
     func sessionsList() async throws -> [AgentSessionInfo] {
-        let payload = try await requireClient().request(method: OperatorMethod.sessionsList, params: [
-            "limit": 50,
-            "includeLastMessage": true,
-            "includeDerivedTitles": true
-        ])
-        let entries = (payload["sessions"] ?? payload["items"] ?? payload["entries"]) as? [[String: Any]] ?? []
+        try await ensureConnected()
+        let entries = try await requireClient().listSessions()
         return entries.compactMap { parseSession($0) }
     }
 
     func spawnTask(_ spec: TaskSpec) async throws -> String {
         var prompt = spec.prompt
         if let repo = spec.repo, !repo.isEmpty { prompt = "Repository: \(repo)\n\n" + prompt }
-        var params: [String: Any] = ["message": prompt]
-        if let label = spec.label, !label.isEmpty { params["label"] = label }
-        let payload = try await requireClient().request(method: OperatorMethod.sessionsCreate, params: params)
-        guard let key = payload["key"] as? String else {
-            throw GatewayError(code: "BAD_RESPONSE", message: "sessions.create returned no key")
-        }
+        let key = "metamod:task:\(UUID().uuidString)"
+        _ = try await chatSend(sessionKey: key, text: "Work on this task independently and report the final result: \(prompt)")
         return key
     }
 
     func channelSend(channel: String, to: String, text: String) async throws {
-        _ = try await requireClient().request(method: OperatorMethod.channelSend, params: [
-            "channel": channel,
-            "to": to,
-            "message": text,
-            "idempotencyKey": UUID().uuidString
-        ])
-    }
-
-    // MARK: Event mapping
-
-    private func handleEvent(_ event: String, payload: [String: Any]) {
-        switch event {
-        case "chat":
-            let sessionKey = payload["sessionKey"] as? String ?? ""
-            let runID = payload["runId"] as? String
-            switch payload["state"] as? String {
-            case "delta":
-                onAgentEvent?(.replyDelta(
-                    sessionKey: sessionKey, runID: runID,
-                    cumulative: Self.extractText(payload["message"]),
-                    delta: payload["deltaText"] as? String))
-            case "final":
-                onAgentEvent?(.replyFinal(
-                    sessionKey: sessionKey, runID: runID,
-                    text: Self.extractText(payload["message"]) ?? ""))
-            case "error", "aborted":
-                onAgentEvent?(.replyFailed(
-                    sessionKey: sessionKey, runID: runID,
-                    message: payload["errorMessage"] as? String ?? "Agent run failed"))
-            default:
-                break
-            }
-        case "sessions.changed", "session.message", "session.operation":
-            onAgentEvent?(.sessionsChanged)
-        default:
-            break
-        }
+        _ = try await chatSend(
+            sessionKey: Self.activeSessionKey,
+            text: "Send this message to \(to) on \(channel), then confirm delivery: \(text)"
+        )
     }
 
     // MARK: Parsing
 
-    private func requireClient() throws -> GatewayClient {
-        guard let client else { throw GatewayError(code: "DISCONNECTED", message: "Not connected to gateway") }
+    private func requireClient() throws -> HermesHTTPClient {
+        guard let client else { throw GatewayError(code: "DISCONNECTED", message: "Not connected to Hermes") }
         return client
     }
 
     private func parseSession(_ entry: [String: Any]) -> AgentSessionInfo? {
-        guard let key = (entry["key"] ?? entry["sessionKey"] ?? entry["id"]) as? String else { return nil }
-        let label = (entry["label"] ?? entry["title"] ?? entry["derivedTitle"]) as? String
-        let updatedMs = (entry["updatedAt"] as? Double) ?? (entry["updatedAt"] as? Int).map(Double.init)
+        guard let id = entry["id"] as? String else { return nil }
+        let title = entry["title"] as? String ?? ""
+        let preview = entry["preview"] as? String ?? ""
+        let startedAt = (entry["updated_at"] as? Double) ?? (entry["updated_at"] as? Int).map(Double.init)
+        let messageCount = (entry["message_count"] as? Int) ?? 0
         return AgentSessionInfo(
-            key: key,
-            label: label?.isEmpty == false ? label! : key.components(separatedBy: ":").last ?? key,
-            status: entry["status"] as? String ?? "",
-            updatedAt: updatedMs.map { Date(timeIntervalSince1970: $0 / 1000) },
-            lastMessage: Self.extractText(entry["lastMessage"])
+            key: id,
+            label: !title.isEmpty ? title : (!preview.isEmpty ? String(preview.prefix(40)) : id),
+            status: messageCount > 0 ? "\(messageCount) msgs" : "new",
+            updatedAt: startedAt.map { Date(timeIntervalSince1970: $0) },
+            lastMessage: preview.isEmpty ? nil : preview
         )
-    }
-
-    /// Chat message payloads vary: a plain string, `{text}`, or `{content:[{text}]}`.
-    static func extractText(_ value: Any?) -> String? {
-        if let string = value as? String { return string }
-        guard let dict = value as? [String: Any] else { return nil }
-        if let string = dict["text"] as? String { return string }
-        if let content = dict["content"] as? String { return content }
-        if let parts = dict["content"] as? [[String: Any]] {
-            let texts = parts.compactMap { $0["text"] as? String }
-            if !texts.isEmpty { return texts.joined(separator: "\n") }
-        }
-        return nil
     }
 }

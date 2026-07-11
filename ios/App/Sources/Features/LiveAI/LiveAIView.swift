@@ -24,7 +24,7 @@ struct LiveAIView: View {
         .background(Theme.Palette.canvas.ignoresSafeArea())
         .navigationTitle("Live AI")
         .navigationBarTitleDisplayMode(.inline)
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(.light)
         .enableInjection()
         // No onDisappear stop: the session is shared and may have been started by
         // the wake word. The Stop button and app termination end it.
@@ -70,12 +70,17 @@ struct LiveAIView: View {
         HUDButton(buttonTitle, systemImage: isActive ? "stop.fill" : "mic.fill") {
             if isActive { session.stop() }
             else {
-                let hermesReady = hermes.isConfigured
+                // `isConfigured` only means an endpoint/token was saved. The Live
+                // session must receive Hermes functions only after that endpoint is
+                // reachable, otherwise Gemini is invited to call a server it cannot
+                // actually reach.
+                if hermes.isConfigured && hermes.state == .disconnected { hermes.connect() }
+                let hermesReady = hermes.state == .connected
                 session.start(
-                    instructions: mode.instructions + (hermesReady ? HermesTools.instructionsAddendum : ""),
+                    instructions: mode.instructions + GlassesTools.instructionsAddendum + (hermesReady ? HermesTools.instructionsAddendum : HermesTools.unavailableInstructions),
                     providers: providers, glasses: glasses,
                     injectFrames: glasses.isAvailable,
-                    tools: hermesReady ? HermesTools.all : [])
+                    tools: GlassesTools.all + (hermesReady ? HermesTools.all : []))
             }
         }
     }

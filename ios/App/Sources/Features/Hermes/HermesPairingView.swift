@@ -4,9 +4,8 @@ import AgentGateway
 import VisionKit
 import Inject
 
-/// One-screen gateway pairing: paste the dashboard/gateway URL (or scan it as a
-/// QR code), and we fill in host, port, TLS, and token. New devices then show up
-/// on the gateway for a one-time approval.
+/// Pair Hermes' OpenAI-compatible API server. The API key is stored in the
+/// Keychain; Gemini only receives Hermes tools after this endpoint verifies it.
 struct HermesPairingView: View {
     @EnvironmentObject private var hermes: HermesService
     @EnvironmentObject private var gateway: GatewayService
@@ -21,7 +20,7 @@ struct HermesPairingView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: Theme.Spacing.lg) {
-                    Text("Paste your gateway address — the same URL that opens your OpenClaw or Hermes dashboard. The token is picked up automatically.")
+                    Text("Paste your Hermes API address. Gemini sends approved tool requests to Hermes through this authenticated connection.")
                         .font(Theme.Font.body(14))
                         .foregroundStyle(Theme.Palette.textSecondary)
 
@@ -29,7 +28,7 @@ struct HermesPairingView: View {
                         Text("GATEWAY URL")
                             .font(Theme.Font.readout(10)).tracking(1)
                             .foregroundStyle(Theme.Palette.textMuted)
-                        TextField("wss://hermes.tail1234.ts.net#token=…", text: $endpointText, axis: .vertical)
+                        TextField("https://hermes.tail1234.ts.net#token=…", text: $endpointText, axis: .vertical)
                             .lineLimit(1...3)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
@@ -61,22 +60,7 @@ struct HermesPairingView: View {
                         }
                     }
 
-                    if hermes.state == .waitingForPairing {
-                        HUDPanel {
-                            VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-                                StatusBadge("awaiting approval", color: Theme.Palette.accent)
-                                Text("Approve this device on your gateway:")
-                                    .font(Theme.Font.body(13))
-                                    .foregroundStyle(Theme.Palette.textSecondary)
-                                Text("openclaw devices approve  ·  \(gateway.nodeID)")
-                                    .font(Theme.Font.readout(12))
-                                    .foregroundStyle(Theme.Palette.textPrimary)
-                                    .textSelection(.enabled)
-                            }
-                        }
-                    }
-
-                    Text("Away from home? Run the gateway behind Tailscale (openclaw gateway --tailscale serve) and use its wss:// URL here — it works from anywhere.")
+                    Text("Use Hermes behind Tailscale or another authenticated HTTPS endpoint. Do not expose the agent directly to the public internet.")
                         .font(Theme.Font.body(12))
                         .foregroundStyle(Theme.Palette.textMuted)
                 }
@@ -98,20 +82,20 @@ struct HermesPairingView: View {
                 applyEndpoint(code)
             }
         }
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(.light)
         .enableInjection()
     }
 
     private func applyEndpoint(_ raw: String) {
         guard let endpoint = Self.parseEndpoint(raw) else {
-            errorText = "Couldn't read that address. Expected something like wss://host:18789#token=…"
+            errorText = "Couldn't read that address. Expected something like https://host:8642#token=…"
             return
         }
         errorText = nil
-        gateway.host = endpoint.host
-        gateway.port = endpoint.port
-        gateway.useTLS = endpoint.tls
-        if let token = endpoint.token { gateway.token = token }
+        hermes.host = endpoint.host
+        hermes.port = endpoint.port
+        hermes.useTLS = endpoint.tls
+        if let token = endpoint.token { hermes.token = token }
         hermes.connect()
         Task {
             try? await Task.sleep(nanoseconds: 500_000_000)
@@ -119,12 +103,12 @@ struct HermesPairingView: View {
         }
     }
 
-    /// Accepts `wss://host:port#token=…`, `ws://host:port?token=…`, a bare
-    /// `host[:port]`, or a Control UI link with a `gatewayUrl` query parameter.
+    /// Accepts `https://host:port#token=…`, `http://host:port?token=…`, or a
+    /// bare `host[:port]` (the API server defaults to port 8642).
     static func parseEndpoint(_ raw: String) -> (host: String, port: Int, tls: Bool, token: String?)? {
         var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return nil }
-        if !text.contains("://") { text = "ws://" + text }
+        if !text.contains("://") { text = "https://" + text }
         guard let components = URLComponents(string: text), let host = components.host, !host.isEmpty else {
             return nil
         }
@@ -144,7 +128,7 @@ struct HermesPairingView: View {
         }
 
         let tls = components.scheme == "wss" || components.scheme == "https"
-        let port = components.port ?? (tls ? 443 : 18789)
+        let port = components.port ?? (tls ? 443 : 8642)
         return (host, port, tls, token)
     }
 }

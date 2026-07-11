@@ -15,6 +15,9 @@ private final class WakeAudioEngine: @unchecked Sendable {
     private let engine = AVAudioEngine()
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
+    /// Invalidates callbacks from recognizers we intentionally cancel while
+    /// replacing a request or yielding the mic to a Live session.
+    private var recognitionGeneration = 0
 
     /// Partial transcript text; fires on the recognition thread.
     var onPartial: (@Sendable (String) -> Void)?
@@ -27,16 +30,27 @@ private final class WakeAudioEngine: @unchecked Sendable {
     }
 
     /// Tear down recognition; optionally deactivate the shared audio session.
-    func stop(deactivate: Bool = false) {
-        queue.async { [weak self] in self?._stop(deactivate: deactivate) }
+    func stop(deactivate: Bool = false, completion: (@Sendable () -> Void)? = nil) {
+        queue.async { [weak self] in
+            self?._stop(deactivate: deactivate)
+            completion?()
+        }
     }
 
     private func _start(_ contextual: [String]) {
-        _stop(deactivate: false)
+        // OpenGlasses keeps a recognizer generation so cancellation from the task
+        // being replaced cannot be mistaken for a real recognition failure. Without
+        // this, every restart schedules another restart and the listener churns.
+        recognitionGeneration &+= 1
+        let generation = recognitionGeneration
+        _stop(deactivate: false, invalidateRecognition: false)
         guard let recognizer, recognizer.isAvailable else { onEnd?(); return }
         do { try configureSession() } catch { onEnd?(); return }
 
         let input = engine.inputNode
+        // The glasses HFP route exposes 16 kHz hardware input. The input format is
+        // the only tap format it accepts; the output format can remain at 48 kHz and
+        // produces AVAudioEngine's `formats don't match` (-10868) failure.
         let format = input.inputFormat(forBus: 0)
         // Mic held by a call, or route mid-renegotiation → invalid format. Retry later.
         guard format.sampleRate > 0, format.channelCount > 0 else { onEnd?(); return }
@@ -64,12 +78,14 @@ private final class WakeAudioEngine: @unchecked Sendable {
         }
 
         task = recognizer.recognitionTask(with: req) { [weak self] result, error in
+            guard self?.recognitionGeneration == generation else { return }
             if let result { self?.onPartial?(result.bestTranscription.formattedString) }
             if error != nil || (result?.isFinal ?? false) { self?.onEnd?() }
         }
     }
 
-    private func _stop(deactivate: Bool) {
+    private func _stop(deactivate: Bool, invalidateRecognition: Bool = true) {
+        if invalidateRecognition { recognitionGeneration &+= 1 }
         task?.cancel(); task = nil
         request?.endAudio(); request = nil
         if engine.isRunning { engine.stop() }
@@ -89,9 +105,14 @@ private final class WakeAudioEngine: @unchecked Sendable {
             .playAndRecord, mode: .default,
             options: [.mixWithOthers, .allowBluetoothHFP, .allowBluetoothA2DP, .defaultToSpeaker])
         try session.setActive(true, options: [])
-        // Prefer the glasses' HFP mic when present; else the phone mic.
-        if let hfp = session.availableInputs?.first(where: { $0.portType == .bluetoothHFP }) {
-            try? session.setPreferredInput(hfp)
+        // OpenGlasses explicitly chooses the Meta/Ray-Ban mic after activation.
+        // On recent iOS releases it can present as Bluetooth LE, not only HFP.
+        let glassesTypes: Set<AVAudioSession.Port> = [.bluetoothHFP, .bluetoothLE, .headsetMic]
+        if let glasses = session.availableInputs?.first(where: { input in
+            glassesTypes.contains(input.portType)
+                && ["meta", "ray-ban", "rayban"].contains { input.portName.lowercased().contains($0) }
+        }) ?? session.availableInputs?.first(where: { $0.portType == .bluetoothHFP }) {
+            try? session.setPreferredInput(glasses)
         } else {
             try? session.setPreferredInput(nil)
         }
@@ -157,8 +178,10 @@ final class WakeWordListener: ObservableObject {
     }
 
     private init() {
-        self.enabled = defaults.bool(forKey: Keys.enabled)
-        self.phrase = defaults.string(forKey: Keys.phrase) ?? "hey vision"
+        // Enabled by default — "Hey Gemini" listens out of the box (asks mic/speech
+        // permission on first foreground). Off only if the user explicitly disables it.
+        self.enabled = defaults.object(forKey: Keys.enabled) as? Bool ?? true
+        self.phrase = defaults.string(forKey: Keys.phrase) ?? "hey gemini"
 
         audio.onPartial = { [weak self] text in
             Task { @MainActor in self?.evaluate(text) }
@@ -176,10 +199,16 @@ final class WakeWordListener: ObservableObject {
         // app when a Bluetooth route change fires on a real device.
         routeObserver = NotificationCenter.default.addObserver(
             forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main
-        ) { [weak self] _ in
+        ) { [weak self] note in
+            let reason = (note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt)
+                .flatMap(AVAudioSession.RouteChangeReason.init(rawValue:))
             MainActor.assumeIsolated {
                 guard let self, self.listening, !self.paused else { return }
-                self.scheduleRestart()
+                // Category changes are emitted by our own setup. Restarting for them
+                // creates an endless recognizer churn loop; only recover real device changes.
+                guard reason == .newDeviceAvailable || reason == .oldDeviceUnavailable || reason == .override else { return }
+                self.audio.stop()
+                self.scheduleRestart(after: 0.5)
             }
         }
         interruptionObserver = NotificationCenter.default.addObserver(
@@ -235,14 +264,26 @@ final class WakeWordListener: ObservableObject {
     func stop() {
         listening = false
         paused = false
-        audio.stop(deactivate: true)
+        audio.stop(deactivate: true) { Self.playListeningEndedCue() }
     }
 
     /// Release the mic for a realtime session without forgetting we want to listen.
-    func pause() {
-        guard listening, !paused else { return }
+    func pause() { pause(then: nil) }
+
+    /// Serializes the microphone handoff to Gemini Live. On glasses, starting the
+    /// second engine before the wake engine releases HFP/LE causes both to fail.
+    func pause(then completion: (@Sendable () -> Void)?) {
+        guard listening, !paused else {
+            completion?()
+            return
+        }
         paused = true
-        audio.stop()
+        audio.stop {
+            // A distinct lower cue tells the wearer that wake listening has stopped
+            // and Gemini Live now owns the microphone.
+            Self.playListeningEndedCue()
+            DispatchQueue.main.async { completion?() }
+        }
     }
 
     /// Resume listening after a realtime session ends.
@@ -262,11 +303,11 @@ final class WakeWordListener: ObservableObject {
 
     /// Throttled restart. The audio engine revives in place (rather than rebuilding),
     /// which is what survives glasses connect/disconnect.
-    private func scheduleRestart() {
+    private func scheduleRestart(after requestedDelay: TimeInterval? = nil) {
         guard listening, !paused, !restartScheduled else { return }
         restartScheduled = true
         let elapsed = Date().timeIntervalSince(lastRestart)
-        let delay = max(0, 0.6 - elapsed)
+        let delay = max(requestedDelay ?? 0, 0.6 - elapsed)
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self else { return }
             self.restartScheduled = false
@@ -277,14 +318,45 @@ final class WakeWordListener: ObservableObject {
     }
 
     private func evaluate(_ transcript: String) {
-        let needle = phrase.trimmingCharacters(in: .whitespaces).lowercased()
+        let needle = Self.normalizedWords(phrase)
         guard !needle.isEmpty else { return }
-        guard transcript.lowercased().contains(needle) else { return }
+        // Speech frequently transcribes a wake phrase as "Hey, Gemini". Compare
+        // word-normalized text so punctuation, case, and extra whitespace do not
+        // prevent an otherwise exact wake phrase from firing.
+        guard Self.matchesWakePhrase(transcript, phrase: needle) else { return }
         // Cooldown so one long partial doesn't re-fire.
         guard Date().timeIntervalSince(lastWake) > 2 else { return }
         lastWake = Date()
-        AudioServicesPlaySystemSound(1113) // short activation chime → glasses speakers
+        Self.playListeningStartedCue()
         onWake?()
+    }
+
+    /// Short system cues route through the current Bluetooth audio route, including
+    /// the glasses speakers. They deliberately avoid a second AVAudioEngine while
+    /// the recognizer owns the microphone.
+    nonisolated private static func playListeningStartedCue() {
+        AudioServicesPlaySystemSound(1113) // rising activation chime
+    }
+
+    nonisolated private static func playListeningEndedCue() {
+        AudioServicesPlaySystemSound(1114) // lower release/stop chime
+    }
+
+    private static func normalizedWords(_ text: String) -> String {
+        let scalars = text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .unicodeScalars
+            .map { CharacterSet.alphanumerics.contains($0) ? String($0) : " " }
+            .joined()
+        return scalars.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+    }
+
+    private static func matchesWakePhrase(_ transcript: String, phrase: String) -> Bool {
+        let normalized = normalizedWords(transcript)
+        var candidates = [phrase]
+        if phrase == "hey gemini" {
+            candidates += ["okay gemini", "ok gemini", "hey geminy", "hey jiminy"]
+        }
+        return candidates.contains { normalized.contains($0) }
     }
 
     /// The phrase plus a few spacing/homophone variants — biasing is the single

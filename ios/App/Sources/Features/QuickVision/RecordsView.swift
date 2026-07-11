@@ -35,7 +35,7 @@ struct RecordsView: View {
         .background(Theme.Palette.canvas.ignoresSafeArea())
         .navigationTitle("Records")
         .navigationBarTitleDisplayMode(.inline)
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(.light)
     }
 
     private func recordRow(_ record: VisionRecord) -> some View {
@@ -73,6 +73,6 @@ struct RecordDetailView: View {
         .background(Theme.Palette.canvas.ignoresSafeArea())
         .navigationTitle(record.kind.title)
         .navigationBarTitleDisplayMode(.inline)
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(.light)
     }
 }

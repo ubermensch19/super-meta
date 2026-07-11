@@ -101,7 +101,7 @@ struct QuickVisionView: View {
         .background(Theme.Palette.canvas.ignoresSafeArea())
         .navigationTitle("Quick Vision")
         .navigationBarTitleDisplayMode(.inline)
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(.light)
         .enableInjection()
         .onChange(of: pickerItem) { _, item in
             Task {

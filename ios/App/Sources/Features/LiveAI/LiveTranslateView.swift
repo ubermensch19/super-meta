@@ -41,7 +41,7 @@ struct LiveTranslateView: View {
         .background(Theme.Palette.canvas.ignoresSafeArea())
         .navigationTitle("Live Translate")
         .navigationBarTitleDisplayMode(.inline)
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(.light)
         .enableInjection()
         .onDisappear { session.stop() }
     }

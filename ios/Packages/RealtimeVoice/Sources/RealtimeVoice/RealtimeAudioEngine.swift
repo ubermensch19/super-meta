@@ -14,28 +14,54 @@ public final class RealtimeAudioEngine: @unchecked Sendable {
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
 
-    /// 24 kHz mono PCM16 — the Realtime API's audio format.
-    private let wireFormat = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 24_000, channels: 1, interleaved: true)!
-    /// Float32 @ 24 kHz for the player node.
+    /// Mic PCM16 wire format. Sample rate is chosen per provider in `start`
+    /// (24 kHz for OpenAI, 16 kHz for Gemini Live).
+    private var wireFormat = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 24_000, channels: 1, interleaved: true)!
+    /// Float32 @ 24 kHz for the player node (both providers emit 24 kHz audio).
     private let playFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 24_000, channels: 1, interleaved: false)!
 
     private var onMicChunk: (@Sendable (Data) -> Void)?
     private var captureConverter: AVAudioConverter?
+    private var playerAttached = false
 
     public init() {}
 
-    public func start(onMicChunk: @escaping @Sendable (Data) -> Void) throws {
+    public func start(captureSampleRate: Double = 24_000, onMicChunk: @escaping @Sendable (Data) -> Void) throws {
         self.onMicChunk = onMicChunk
+        wireFormat = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: captureSampleRate, channels: 1, interleaved: true)!
 
         let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetooth])
+        // Match the OpenGlasses profile: voiceChat restricts routes and can fight
+        // the glasses camera/HFP session. The default mixed profile preserves the
+        // Meta/Ray-Ban input while Gemini owns the mic.
+        try session.setCategory(
+            .playAndRecord,
+            mode: .default,
+            options: [.mixWithOthers, .allowBluetoothHFP, .allowBluetoothA2DP, .defaultToSpeaker]
+        )
         try session.setActive(true)
+        let glassesTypes: Set<AVAudioSession.Port> = [.bluetoothHFP, .bluetoothLE, .headsetMic]
+        if let glasses = session.availableInputs?.first(where: { input in
+            glassesTypes.contains(input.portType)
+                && ["meta", "ray-ban", "rayban"].contains { input.portName.lowercased().contains($0) }
+        }) ?? session.availableInputs?.first(where: { $0.portType == .bluetoothHFP }) {
+            try? session.setPreferredInput(glasses)
+        }
 
-        engine.attach(player)
-        engine.connect(player, to: engine.mainMixerNode, format: playFormat)
+        if !playerAttached {
+            engine.attach(player)
+            engine.connect(player, to: engine.mainMixerNode, format: playFormat)
+            playerAttached = true
+        }
 
         let input = engine.inputNode
+        // Match the active microphone hardware (16 kHz on glasses HFP). Using the
+        // input node's 48 kHz output format causes the -10868 format mismatch seen
+        // on-device before either wake recognition or Gemini Live can receive audio.
         let inputFormat = input.inputFormat(forBus: 0)
+        guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
+            throw NSError(domain: "RealtimeAudioEngine", code: 1, userInfo: [NSLocalizedDescriptionKey: "Microphone input is unavailable"])
+        }
         captureConverter = AVAudioConverter(from: inputFormat, to: wireFormat)
 
         input.installTap(onBus: 0, bufferSize: 2048, format: inputFormat) { [weak self] buffer, _ in

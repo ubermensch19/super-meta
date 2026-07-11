@@ -1,12 +1,14 @@
 import SwiftUI
+import SwiftData
 import DesignSystem
 import GlassesKit
 import Inject
 
-/// The feature hub — an editorial layout with a hero action and grouped sections
-/// rather than a uniform tile grid.
+/// The feature hub — a light "NEURA" dashboard: a hero Live AI card, real-data
+/// stat cards, and grouped feature sections.
 struct HomeView: View {
     @EnvironmentObject private var glasses: GlassesService
+    @Query(sort: \VisionRecord.createdAt, order: .reverse) private var records: [VisionRecord]
     @State private var showSettings = false
     @State private var showConnect = false
     @State private var connectShownOnce = false
@@ -14,6 +16,7 @@ struct HomeView: View {
 
     /// Auto-present the connect sheet once per launch when the glasses aren't linked.
     private func maybeShowConnect() {
+        if ProcessInfo.processInfo.environment["UI_PREVIEW"] != nil { return }
         guard glasses.isAvailable, glasses.registration == .notRegistered, !connectShownOnce else { return }
         connectShownOnce = true
         showConnect = true
@@ -28,28 +31,12 @@ struct HomeView: View {
                     NavigationLink { LiveAIView() } label: { heroCard }
                         .buttonStyle(.plain)
 
-                    section("See") {
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: Theme.Spacing.md) {
-                                compactCard("Quick Vision", "Recognize", "eye", Theme.Palette.accent) { QuickVisionView() }
-                                compactCard("Vision Chat", "Ask anything", "bubble.left.and.text.bubble.right", Theme.Palette.positive) { VisionRecognitionView() }
-                                compactCard("LeanEat", "Nutrition", "leaf", Theme.Palette.live) { LeanEatView() }
-                            }
-                            .padding(.horizontal, Theme.Spacing.lg)
-                        }
-                        .padding(.horizontal, -Theme.Spacing.lg)
-                    }
-
-                    section("Speak") {
-                        NavigationLink { LiveTranslateView() } label: {
-                            wideCard("Live Translate", "Real-time, across 11 languages", "globe", Theme.Palette.positive)
-                        }.buttonStyle(.plain)
-                    }
+                    statRow
 
                     section("Connect") {
                         VStack(spacing: Theme.Spacing.md) {
                             NavigationLink { HermesView() } label: {
-                                wideCard("Hermes", "Command your agent — tasks, messages, status", "command", Theme.Palette.accent)
+                                wideCard("Hermes", "Command your agent — tasks, messages, status", "command", Theme.Palette.ink)
                             }.buttonStyle(.plain)
                             HStack(spacing: Theme.Spacing.md) {
                                 NavigationLink { GatewayView() } label: {
@@ -61,9 +48,6 @@ struct HomeView: View {
                             }
                         }
                     }
-
-                    NavigationLink { RecordsView() } label: { recordsRow }
-                        .buttonStyle(.plain)
                 }
                 .padding(Theme.Spacing.lg)
             }
@@ -76,15 +60,15 @@ struct HomeView: View {
             .onAppear { maybeShowConnect() }
             .onChange(of: glasses.registration) { _, _ in maybeShowConnect() }
         }
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(.light)
         .enableInjection()
     }
 
     // MARK: Header
 
     private var header: some View {
-        HStack(alignment: .firstTextBaseline) {
-            VStack(alignment: .leading, spacing: 2) {
+        HStack(alignment: .center) {
+            VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: Theme.Spacing.sm) {
                     Image("Logomark")
                         .resizable()
@@ -100,9 +84,11 @@ struct HomeView: View {
             Button { showSettings = true } label: {
                 Image(systemName: "gearshape")
                     .font(.system(size: 18, weight: .medium))
-                    .foregroundStyle(Theme.Palette.textSecondary)
-                    .padding(10)
+                    .foregroundStyle(Theme.Palette.textPrimary)
+                    .frame(width: 42, height: 42)
                     .background(Circle().fill(Theme.Palette.surface))
+                    .overlay(Circle().strokeBorder(Theme.Palette.border, lineWidth: 1))
+                    .shadow(color: .black.opacity(0.05), radius: 8, y: 3)
             }
         }
     }
@@ -116,7 +102,7 @@ struct HomeView: View {
                     showConnect = true
                 }
                 .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(Theme.Palette.accent)
+                .foregroundStyle(Theme.Palette.textPrimary)
                 .disabled(glasses.registration == .registering)
             }
         }
@@ -143,52 +129,89 @@ struct HomeView: View {
     // MARK: Hero
 
     private var heroCard: some View {
-        VStack(alignment: .leading, spacing: Theme.Spacing.md) {
-            HStack {
-                Image(systemName: "mic.fill").font(.system(size: 22))
-                Spacer()
-                Image(systemName: "arrow.up.right").font(.system(size: 15, weight: .semibold))
+        GlassCard {
+            VStack(alignment: .leading, spacing: Theme.Spacing.md) {
+                HStack(alignment: .top) {
+                    StatusBadge(glasses.hasActiveDevice ? "Live" : "Standby", color: dotColor)
+                    Spacer()
+                    heroGlyph
+                }
+                Spacer(minLength: Theme.Spacing.md)
+                Text("Live AI")
+                    .font(.system(size: 30, weight: .bold))
+                    .foregroundStyle(Theme.Palette.textPrimary)
+                Text("Talk to your glasses in real time — it sees and hears with you.")
+                    .font(.system(size: 14))
+                    .foregroundStyle(Theme.Palette.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: Theme.Spacing.sm) {
+                    Text("Start Live AI")
+                        .font(.system(size: 15, weight: .semibold))
+                    Image(systemName: "arrow.up.right")
+                        .font(.system(size: 13, weight: .bold))
+                }
+                .foregroundStyle(Color.white)
+                .padding(.horizontal, Theme.Spacing.lg)
+                .padding(.vertical, Theme.Spacing.md)
+                .background(Capsule().fill(Theme.Palette.ink))
+                .padding(.top, Theme.Spacing.xs)
             }
-            .foregroundStyle(Theme.Palette.canvas)
-            Spacer()
-            Text("Live AI").font(.system(size: 26, weight: .bold)).foregroundStyle(Theme.Palette.canvas)
-            Text("Talk to your glasses in real time — it sees and hears with you.")
-                .font(.system(size: 14)).foregroundStyle(Theme.Palette.canvas.opacity(0.8))
-                .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, minHeight: 190, alignment: .topLeading)
         }
-        .padding(Theme.Spacing.lg)
-        .frame(maxWidth: .infinity, minHeight: 176, alignment: .topLeading)
-        .background(
-            LinearGradient(
-                colors: [Theme.Palette.accent, Theme.Palette.live],
-                startPoint: .topLeading, endPoint: .bottomTrailing
+    }
+
+    /// The glasses' latest camera frame if we have one, otherwise a mic glyph.
+    @ViewBuilder private var heroGlyph: some View {
+        if let frame = glasses.latestFrame {
+            Image(uiImage: frame)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 64, height: 64)
+                .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous))
+        } else {
+            Image(systemName: "mic.fill")
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(Theme.Palette.textPrimary)
+                .frame(width: 52, height: 52)
+                .background(Circle().fill(Theme.Palette.surfaceHigh))
+        }
+    }
+
+    // MARK: Stat row (real data only)
+
+    private var statRow: some View {
+        HStack(spacing: Theme.Spacing.md) {
+            StatCard(value: "\(records.count)", label: "Records", systemImage: "square.stack.3d.up")
+            StatCard(value: "\(weekCount)", label: "This week", systemImage: "calendar")
+            StatCard(
+                value: connectionValue,
+                label: "Glasses",
+                tint: glasses.hasActiveDevice ? Theme.Palette.positive : Theme.Palette.textSecondary,
+                systemImage: "eyeglasses"
             )
-        )
-        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.lg, style: .continuous))
+        }
+    }
+
+    private var weekCount: Int {
+        let cutoff = Calendar.current.date(byAdding: .day, value: -7, to: .now) ?? .now
+        return records.filter { $0.createdAt >= cutoff }.count
+    }
+
+    private var connectionValue: String {
+        if glasses.hasActiveDevice { return "Live" }
+        if glasses.registration == .registered { return "Linked" }
+        return "Off"
     }
 
     // MARK: Section scaffolding
 
     private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: Theme.Spacing.md) {
-            Text(title).font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.Palette.textMuted)
+            Text(title)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Theme.Palette.textSecondary)
             content()
         }
-    }
-
-    private func compactCard<D: View>(_ title: String, _ subtitle: String, _ icon: String, _ tint: Color, @ViewBuilder destination: @escaping () -> D) -> some View {
-        NavigationLink { destination() } label: {
-            VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-                iconBadge(icon, tint)
-                Spacer()
-                Text(title).font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.Palette.textPrimary)
-                Text(subtitle).font(.system(size: 12)).foregroundStyle(Theme.Palette.textSecondary)
-            }
-            .frame(width: 132, height: 132, alignment: .topLeading)
-            .padding(Theme.Spacing.md)
-            .background(RoundedRectangle(cornerRadius: Theme.Radius.md).fill(Theme.Palette.surface))
-        }
-        .buttonStyle(.plain)
     }
 
     private func wideCard(_ title: String, _ subtitle: String, _ icon: String, _ tint: Color) -> some View {
@@ -201,8 +224,7 @@ struct HomeView: View {
             Spacer()
             Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.Palette.textMuted)
         }
-        .padding(Theme.Spacing.md)
-        .background(RoundedRectangle(cornerRadius: Theme.Radius.md).fill(Theme.Palette.surface))
+        .modifier(CardSurface())
     }
 
     private func tile(_ title: String, _ subtitle: String, _ icon: String, _ tint: Color) -> some View {
@@ -213,25 +235,31 @@ struct HomeView: View {
             Text(subtitle).font(.system(size: 12)).foregroundStyle(Theme.Palette.textSecondary)
         }
         .frame(maxWidth: .infinity, minHeight: 118, alignment: .topLeading)
-        .padding(Theme.Spacing.md)
-        .background(RoundedRectangle(cornerRadius: Theme.Radius.md).fill(Theme.Palette.surface))
-    }
-
-    private var recordsRow: some View {
-        HStack(spacing: Theme.Spacing.md) {
-            Image(systemName: "clock.arrow.circlepath").font(.system(size: 16)).foregroundStyle(Theme.Palette.textSecondary)
-            Text("History").font(.system(size: 15, weight: .medium)).foregroundStyle(Theme.Palette.textPrimary)
-            Spacer()
-            Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.Palette.textMuted)
-        }
-        .padding(.vertical, Theme.Spacing.sm)
+        .modifier(CardSurface())
     }
 
     private func iconBadge(_ icon: String, _ tint: Color) -> some View {
         Image(systemName: icon)
-            .font(.system(size: 17, weight: .medium))
-            .foregroundStyle(tint)
+            .font(.system(size: 17, weight: .semibold))
+            .foregroundStyle(tint == Theme.Palette.ink ? Color.white : tint)
             .frame(width: 38, height: 38)
-            .background(Circle().fill(tint.opacity(0.14)))
+            .background(Circle().fill(tint == Theme.Palette.ink ? Theme.Palette.ink : tint.opacity(0.14)))
+    }
+}
+
+/// White card chrome shared by the Home tiles — surface fill, hairline border, soft shadow.
+private struct CardSurface: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .padding(Theme.Spacing.md)
+            .background(
+                RoundedRectangle(cornerRadius: Theme.Radius.lg, style: .continuous)
+                    .fill(Theme.Palette.surface)
+                    .shadow(color: .black.opacity(0.05), radius: 12, x: 0, y: 5)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.Radius.lg, style: .continuous)
+                    .strokeBorder(Theme.Palette.border, lineWidth: 1)
+            )
     }
 }

@@ -1,31 +1,34 @@
 import SwiftUI
 
-/// Super Meta design tokens — a dark, cinematic heads-up-display aesthetic.
-/// Deliberately distinct: near-black canvas, warm amber signal accent, mono data readouts.
+/// Super Meta design tokens — a light, glassmorphic "NEURA" aesthetic.
+/// Off-white canvas, white glass cards with soft shadows, a near-black "ink" for
+/// primary actions, and a single restrained highlight accent.
 public enum Theme {
 
     // MARK: - Color
 
     public enum Palette {
-        /// Base canvas — near-black.
-        public static let canvas = Color(hex: "0B0B0F")
-        /// Elevated glass surface.
-        public static let surface = Color(hex: "16161D")
+        /// Base canvas — off-white.
+        public static let canvas = Color(hex: "F0F0F2")
+        /// White glass card base.
+        public static let surface = Color(hex: "FFFFFF")
         /// Higher elevation / pressed surface.
-        public static let surfaceHigh = Color(hex: "20212B")
-        /// Hairline borders on glass.
-        public static let border = Color(hex: "2E2F3A")
+        public static let surfaceHigh = Color(hex: "E8E8EC")
+        /// Hairline dividers / card borders.
+        public static let border = Color(hex: "E2E2E7")
 
-        /// Primary signal accent — warm amber.
-        public static let accent = Color(hex: "FFA62B")
+        /// Near-black — primary buttons and the active tab.
+        public static let ink = Color(hex: "111114")
+        /// Restrained highlight accent — used for icon tints / small emphasis.
+        public static let accent = Color(hex: "3A3A3C")
         /// Live / recording state.
         public static let live = Color(hex: "FF4D8D")
-        /// Positive / connected.
-        public static let positive = Color(hex: "39E0A0")
+        /// Positive / connected (darker green for AA contrast on white).
+        public static let positive = Color(hex: "10B981")
 
-        public static let textPrimary = Color(hex: "F4F4F6")
-        public static let textSecondary = Color(hex: "9A9BA6")
-        public static let textMuted = Color(hex: "61626C")
+        public static let textPrimary = Color(hex: "0B0B0F")
+        public static let textSecondary = Color(hex: "6B6C76")
+        public static let textMuted = Color(hex: "9A9BA6")
     }
 
     // MARK: - Typography

@@ -80,7 +80,20 @@ struct ConnectGlassesView: View {
 
             Spacer()
 
-            HUDButton(glasses.hasActiveDevice ? "Done" : "Continue") { dismiss() }
+            HUDButton(primaryActionTitle) {
+                switch glasses.registration {
+                case .registered:
+                    dismiss()
+                case .registering:
+                    break
+                default:
+                    // This is the action that hands the user into Meta AI's DAT
+                    // registration flow. The prior "Continue" label only dismissed
+                    // this sheet, so tapping it could never open Meta AI.
+                    Task { await glasses.startRegistration() }
+                }
+            }
+            .disabled(glasses.registration == .registering || !glasses.isAvailable)
                 .padding(.horizontal, Theme.Spacing.lg)
         }
         .padding(Theme.Spacing.lg)
@@ -105,6 +118,14 @@ struct ConnectGlassesView: View {
             return "Approve the connection in the Meta AI app, then come back."
         default:
             return "Turn on the toggle to link Super Meta with your glasses. You'll approve it once in the Meta AI app."
+        }
+    }
+
+    private var primaryActionTitle: String {
+        switch glasses.registration {
+        case .registered: return glasses.hasActiveDevice ? "Done" : "Turn on glasses"
+        case .registering: return "Opening Meta AI…"
+        default: return "Connect in Meta AI"
         }
     }
 }

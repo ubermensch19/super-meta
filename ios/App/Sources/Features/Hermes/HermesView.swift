@@ -23,6 +23,15 @@ struct HermesView: View {
                 .padding(.horizontal, Theme.Spacing.lg)
                 .padding(.top, Theme.Spacing.md)
 
+            if let connectionHint {
+                Text(connectionHint)
+                    .font(Theme.Font.body(12))
+                    .foregroundStyle(Theme.Palette.textSecondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, Theme.Spacing.lg)
+                    .padding(.top, Theme.Spacing.sm)
+            }
+
             if !hermes.sessions.isEmpty {
                 sessionStrip
                     .padding(.top, Theme.Spacing.md)
@@ -49,7 +58,7 @@ struct HermesView: View {
         .background(Theme.Palette.canvas.ignoresSafeArea())
         .navigationTitle("Hermes")
         .navigationBarTitleDisplayMode(.inline)
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(.light)
         .sheet(isPresented: $showPairing) { HermesPairingView() }
         .sheet(isPresented: $showTaskSheet) { SpawnTaskSheet() }
         .sheet(isPresented: $showMessageSheet) { ChannelMessageSheet() }
@@ -107,6 +116,16 @@ struct HermesView: View {
         case .error: return Theme.Palette.live
         case .disconnected: return Theme.Palette.textMuted
         }
+    }
+
+    private var connectionHint: String? {
+        if case let .error(message) = hermes.state { return message }
+        guard hermes.state != .connected else { return nil }
+        let host = hermes.host.lowercased()
+        if host == "127.0.0.1" || host == "localhost" || host == "::1" {
+            return "This address points to the iPhone, not your Mac. Pair a reachable, authenticated Hermes URL to connect controls."
+        }
+        return nil
     }
 
     // MARK: Sessions
@@ -322,7 +341,7 @@ private struct SpawnTaskSheet: View {
                 }
             }
         }
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(.light)
     }
 
     private func start() {
@@ -389,7 +408,7 @@ private struct ChannelMessageSheet: View {
                 }
             }
         }
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(.light)
     }
 
     private func send() {

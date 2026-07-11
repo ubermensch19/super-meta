@@ -9,11 +9,22 @@ struct SettingsView: View {
     @EnvironmentObject private var glasses: GlassesService
     @EnvironmentObject private var wakeListener: WakeWordListener
     @Environment(\.dismiss) private var dismiss
-    @State private var useCustomModel = false
-    @State private var modelChoice = "gpt-realtime"
     @ObserveInjection var inject
 
-    private let customTag = "__custom__"
+    /// Hidden when embedded as a tab (there's no sheet to dismiss).
+    var showsDoneButton = true
+
+    struct ModelOption { let id: String; let title: String; let subtitle: String }
+    /// Selectable Gemini Live models.
+    static let liveModels: [ModelOption] = [
+        .init(id: "gemini-3.1-flash-live-preview", title: "Gemini Live · Flash 3.1", subtitle: "Current low-latency voice model (recommended)"),
+        .init(id: "gemini-2.5-flash-native-audio-preview-12-2025", title: "Gemini Live · Native Audio", subtitle: "Natural expressive voice · preview")
+    ]
+    /// On-device Gemma models — shown disabled (local support coming soon).
+    static let gemmaModels: [ModelOption] = [
+        .init(id: "gemma-3n-e2b", title: "Gemma 4 · E2B", subtitle: "On-device · offline"),
+        .init(id: "gemma-3n-e4b", title: "Gemma 4 · E4B", subtitle: "On-device · offline")
+    ]
 
     var body: some View {
         NavigationStack {
@@ -25,21 +36,35 @@ struct SettingsView: View {
                 aboutSection
             }
             .scrollContentBackground(.hidden)
+            .contentMargins(.bottom, 90, for: .scrollContent)
             .background(Theme.Palette.canvas.ignoresSafeArea())
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
-                        .foregroundStyle(Theme.Palette.accent)
+                if showsDoneButton {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Done") { dismiss() }
+                            .foregroundStyle(Theme.Palette.textPrimary)
+                    }
                 }
             }
         }
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(.light)
         .enableInjection()
-        .onAppear {
-            useCustomModel = !ProviderManager.knownRealtimeModels.contains(providers.realtimeModel)
-            modelChoice = useCustomModel ? customTag : providers.realtimeModel
+    }
+
+    private func modelRow(_ title: String, _ subtitle: String, selected: Bool, trailing: String?) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).foregroundStyle(Theme.Palette.textPrimary)
+                Text(subtitle).font(Theme.Font.readout(11)).foregroundStyle(Theme.Palette.textMuted)
+            }
+            Spacer()
+            if let trailing {
+                Text(trailing).font(Theme.Font.readout(11)).foregroundStyle(Theme.Palette.textMuted)
+            } else if selected {
+                Image(systemName: "checkmark").foregroundStyle(Theme.Palette.accent)
+            }
         }
     }
 
@@ -48,14 +73,23 @@ struct SettingsView: View {
             HStack {
                 Text("Glasses")
                 Spacer()
-                StatusBadge(
-                    glasses.isAvailable ? (glasses.hasActiveDevice ? "connected" : "registered") : "unavailable",
-                    color: glasses.hasActiveDevice ? Theme.Palette.positive : Theme.Palette.textMuted
-                )
+                StatusBadge(glassesStatus.0, color: glassesStatus.1)
             }
         } header: { sectionHeader("Device") }
         .listRowBackground(Theme.Palette.surface)
         .foregroundStyle(Theme.Palette.textPrimary)
+    }
+
+    private var glassesStatus: (String, Color) {
+        guard glasses.isAvailable else { return ("unavailable", Theme.Palette.textMuted) }
+        switch glasses.registration {
+        case .registered:
+            return glasses.hasActiveDevice ? ("connected", Theme.Palette.positive) : ("linked · turn on glasses", Theme.Palette.accent)
+        case .registering:
+            return ("connecting…", Theme.Palette.accent)
+        default:
+            return ("not linked", Theme.Palette.textMuted)
+        }
     }
 
     private var providerSection: some View {
@@ -79,7 +113,7 @@ struct SettingsView: View {
                 }
             }
         } header: { sectionHeader("AI Provider") } footer: {
-            Text("Used for image recognition and chat. Realtime voice uses OpenAI — pick its model under Voice.")
+            Text("Used for image recognition and chat. Realtime voice uses Gemini Live — pick the model under Voice.")
                 .foregroundStyle(Theme.Palette.textMuted)
         }
         .listRowBackground(Theme.Palette.surface)
@@ -88,25 +122,16 @@ struct SettingsView: View {
 
     private var voiceSection: some View {
         Section {
-            Picker("Realtime model", selection: $modelChoice) {
-                ForEach(ProviderManager.knownRealtimeModels, id: \.self) { Text($0).tag($0) }
-                Text("Custom").tag(customTag)
-            }
-            .tint(Theme.Palette.accent)
-            .onChange(of: modelChoice) { _, choice in
-                if choice == customTag {
-                    useCustomModel = true
-                } else {
-                    useCustomModel = false
-                    providers.realtimeModel = choice
+            ForEach(Self.liveModels, id: \.id) { model in
+                Button {
+                    providers.realtimeModel = model.id
+                } label: {
+                    modelRow(model.title, model.subtitle, selected: providers.realtimeModel == model.id, trailing: nil)
                 }
             }
-
-            if useCustomModel {
-                TextField("Model id, e.g. gpt-realtime-2", text: $providers.realtimeModel)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .foregroundStyle(Theme.Palette.textPrimary)
+            ForEach(Self.gemmaModels, id: \.id) { model in
+                modelRow(model.title, model.subtitle, selected: false, trailing: "Soon")
+                    .foregroundStyle(Theme.Palette.textMuted)
             }
 
             Toggle("Wake word", isOn: $wakeListener.enabled)
@@ -207,7 +232,7 @@ struct APIKeyEntryView: View {
         .navigationTitle(vendor.displayName)
         .navigationBarTitleDisplayMode(.inline)
         .onAppear { draft = providers.apiKey(for: vendor) }
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(.light)
     }
 
     private var footerHint: String {
@@ -285,7 +310,7 @@ struct ModelPickerView: View {
         .navigationTitle("\(vendor.displayName) Model")
         .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $search, prompt: "Filter models")
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(.light)
         .task { await load() }
     }
 
