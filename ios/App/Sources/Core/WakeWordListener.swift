@@ -56,6 +56,8 @@ final class WakeWordListener: ObservableObject {
     /// Cooldown so one utterance doesn't fire the wake handler repeatedly.
     private var lastWake = Date.distantPast
     private var restartScheduled = false
+    private var routeObserver: NSObjectProtocol?
+    private var interruptionObserver: NSObjectProtocol?
 
     private let defaults = UserDefaults.standard
     private enum Keys {
@@ -66,12 +68,31 @@ final class WakeWordListener: ObservableObject {
     private init() {
         self.enabled = defaults.bool(forKey: Keys.enabled)
         self.phrase = defaults.string(forKey: Keys.phrase) ?? "hey vision"
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(handleRouteChange(_:)),
-            name: AVAudioSession.routeChangeNotification, object: nil)
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(handleInterruption(_:)),
-            name: AVAudioSession.interruptionNotification, object: nil)
+        // AVAudioSession posts these on a background thread, so deliver them through
+        // a closure that hops to the main actor. A @MainActor @objc selector would
+        // trip a libdispatch queue assertion and crash when a BT route change fires.
+        routeObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.routeChangeNotification, object: nil, queue: nil
+        ) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.listening, !self.paused else { return }
+                self.scheduleRestart()
+            }
+        }
+        interruptionObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.interruptionNotification, object: nil, queue: nil
+        ) { [weak self] note in
+            let type = (note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt)
+                .flatMap(AVAudioSession.InterruptionType.init(rawValue:))
+            Task { @MainActor in
+                guard let self, self.listening, !self.paused else { return }
+                switch type {
+                case .began: self.teardownRecognition()
+                case .ended: self.scheduleRestart()
+                default: break
+                }
+            }
+        }
     }
 
     // MARK: Lifecycle
@@ -240,28 +261,4 @@ final class WakeWordListener: ObservableObject {
         return Array(out)
     }
 
-    // MARK: Route / interruption handling
-
-    @objc private func handleRouteChange(_ note: Notification) {
-        Task { @MainActor in
-            guard self.listening, !self.paused else { return }
-            self.scheduleRestart()
-        }
-    }
-
-    @objc private func handleInterruption(_ note: Notification) {
-        guard let info = note.userInfo,
-              let raw = info[AVAudioSessionInterruptionTypeKey] as? UInt,
-              let type = AVAudioSession.InterruptionType(rawValue: raw) else { return }
-        Task { @MainActor in
-            switch type {
-            case .began:
-                self.teardownRecognition()
-            case .ended:
-                if self.listening, !self.paused { self.scheduleRestart() }
-            @unknown default:
-                break
-            }
-        }
-    }
 }
