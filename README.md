@@ -19,7 +19,7 @@ ios/                        # native Swift (SwiftUI) app — the iOS product
   App/                      # app target (entry point, root UI)
   Packages/
     DesignSystem/           # HUD design tokens + components
-mobile/                     # React Native (Expo) app — cross-platform shell
+android/                    # React Native (Expo) app — Android build
 ```
 
 Local packages: `DesignSystem` (HUD theme), `AIProviders` (Gemini/OpenAI/Claude/OpenRouter), `GlassesKit` (DAT SDK wrapper), `RealtimeVoice` (OpenAI Realtime + audio engine), `AgentGateway` (OpenClaw/Hermes node client). The app target hosts the features, settings, persistence, and Siri intents.
