@@ -157,7 +157,9 @@ final class WakeWordListener: ObservableObject {
     }
 
     private init() {
-        self.enabled = defaults.bool(forKey: Keys.enabled)
+        // Enabled by default — "Hey Gemini" listens out of the box (asks mic/speech
+        // permission on first foreground). Off only if the user explicitly disables it.
+        self.enabled = defaults.object(forKey: Keys.enabled) as? Bool ?? true
         self.phrase = defaults.string(forKey: Keys.phrase) ?? "hey gemini"
 
         audio.onPartial = { [weak self] text in
