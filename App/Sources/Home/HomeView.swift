@@ -24,6 +24,9 @@ struct HomeView: View {
                         FeatureTile(title: "LeanEat", subtitle: "Food & nutrition", icon: "leaf", tint: Theme.Palette.live) {
                             LeanEatView()
                         }
+                        FeatureTile(title: "Agent Link", subtitle: "OpenClaw / Hermes", icon: "antenna.radiowaves.left.and.right", tint: Theme.Palette.accent) {
+                            GatewayView()
+                        }
                         FeatureTile(title: "Records", subtitle: "Your history", icon: "clock.arrow.circlepath", tint: Theme.Palette.textSecondary) {
                             RecordsView()
                         }
