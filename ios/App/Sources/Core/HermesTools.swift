@@ -4,16 +4,40 @@ import RealtimeVoice
 /// Realtime tool definitions that let the voice model command the user's
 /// OpenClaw/Hermes agent. Dispatched by `HermesService.handleToolCall`.
 enum HermesTools {
-    static let all: [RealtimeTool] = [ask, spawnTask, sendMessage, sessionsStatus]
+    /// A single rich delegate keeps Gemini's side simple: Hermes receives the
+    /// complete natural-language intent and selects the appropriate configured
+    /// capability (Composio, MCP, browser, messaging, calendar, and so on).
+    static let all: [RealtimeTool] = [execute, ask, spawnTask, sendMessage, sessionsStatus]
 
     /// Appended to the session instructions when hermes is paired.
     static let instructionsAddendum = """
      You can also command the user's personal AI agent, called hermes, through tools: \
-    hermes_ask for questions and requests, hermes_spawn_task to start a background job \
+    hermes_execute for any real-world action or request, hermes_ask for questions, hermes_spawn_task to start a background job \
     like a coding task, hermes_send_message to message people through the agent's \
     channels, and hermes_sessions_status to check what it is working on. Confirm the \
     recipient and content out loud before sending any message. If a tool reports that \
     hermes is still working, tell the user you'll announce the answer when it's ready.
+    """
+
+    static let execute = RealtimeTool(
+        name: "hermes_execute",
+        description: "Delegate a complete user request to Hermes so it can use the user's connected tools and services. Use for actions, research, calendars, messaging, Composio integrations, browser work, or any task that must be done outside this conversation.",
+        parametersJSON: """
+        {"type":"object","properties":{\
+        "task":{"type":"string","description":"Complete, specific description of what Hermes should do"}},\
+        "required":["task"]}
+        """
+    )
+
+    /// Used when a saved endpoint exists but is not currently reachable from
+    /// the phone. This prevents the model from promising an action it has no
+    /// live tool for, while leaving native Gemini features (including Search)
+    /// fully available.
+    static let unavailableInstructions = """
+    Hermes is currently offline or not paired with this phone. Do not claim you
+    can send work to Hermes, access its connected services, or wait for a
+    Hermes reply. Explain briefly that the Hermes connection must be restored
+    in the app before those actions are available.
     """
 
     static let ask = RealtimeTool(

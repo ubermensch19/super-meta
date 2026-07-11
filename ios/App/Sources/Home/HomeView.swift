@@ -5,7 +5,7 @@ import GlassesKit
 import Inject
 
 /// The feature hub — a light "NEURA" dashboard: a hero Live AI card, real-data
-/// stat cards, and grouped feature sections. Sits inside the floating-tab root.
+/// stat cards, and grouped feature sections.
 struct HomeView: View {
     @EnvironmentObject private var glasses: GlassesService
     @Query(sort: \VisionRecord.createdAt, order: .reverse) private var records: [VisionRecord]
@@ -33,24 +33,6 @@ struct HomeView: View {
 
                     statRow
 
-                    section("See") {
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: Theme.Spacing.md) {
-                                compactCard("Quick Vision", "Recognize", "eye", Theme.Palette.ink) { QuickVisionView() }
-                                compactCard("Vision Chat", "Ask anything", "bubble.left.and.text.bubble.right", Theme.Palette.positive) { VisionRecognitionView() }
-                                compactCard("LeanEat", "Nutrition", "leaf", Theme.Palette.live) { LeanEatView() }
-                            }
-                            .padding(.horizontal, Theme.Spacing.lg)
-                        }
-                        .padding(.horizontal, -Theme.Spacing.lg)
-                    }
-
-                    section("Speak") {
-                        NavigationLink { LiveTranslateView() } label: {
-                            wideCard("Live Translate", "Real-time, across 11 languages", "globe", Theme.Palette.positive)
-                        }.buttonStyle(.plain)
-                    }
-
                     section("Connect") {
                         VStack(spacing: Theme.Spacing.md) {
                             NavigationLink { HermesView() } label: {
@@ -68,7 +50,6 @@ struct HomeView: View {
                     }
                 }
                 .padding(Theme.Spacing.lg)
-                .padding(.bottom, 96)
             }
             .background(Theme.Palette.canvas.ignoresSafeArea())
             .navigationBarHidden(true)
@@ -231,20 +212,6 @@ struct HomeView: View {
                 .foregroundStyle(Theme.Palette.textSecondary)
             content()
         }
-    }
-
-    private func compactCard<D: View>(_ title: String, _ subtitle: String, _ icon: String, _ tint: Color, @ViewBuilder destination: @escaping () -> D) -> some View {
-        NavigationLink { destination() } label: {
-            VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-                iconBadge(icon, tint)
-                Spacer()
-                Text(title).font(.system(size: 16, weight: .semibold)).foregroundStyle(Theme.Palette.textPrimary)
-                Text(subtitle).font(.system(size: 12)).foregroundStyle(Theme.Palette.textSecondary)
-            }
-            .frame(width: 132, height: 132, alignment: .topLeading)
-            .modifier(CardSurface())
-        }
-        .buttonStyle(.plain)
     }
 
     private func wideCard(_ title: String, _ subtitle: String, _ icon: String, _ tint: Color) -> some View {

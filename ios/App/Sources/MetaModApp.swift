@@ -51,15 +51,18 @@ struct MetaModApp: App {
     private func configureWake() {
         let session = self.session
         let hermes = self.hermes
+        // A saved pairing is only configuration; do not advertise agent controls
+        // to Gemini until the phone has a live authenticated socket to Hermes.
+        if hermes.isConfigured { hermes.connect() }
         wakeListener.onWake = {
             router.liveAIWoke = true // surface the Live AI sheet if/when foregrounded
-            if session.status == .idle {
-                let hermesReady = hermes.isConfigured
+            if session.status != .connecting && session.status != .live {
+                let hermesReady = hermes.state == .connected
                 session.start(
-                    instructions: LiveAIMode.standard.instructions + (hermesReady ? HermesTools.instructionsAddendum : ""),
+                    instructions: LiveAIMode.standard.instructions + GlassesTools.instructionsAddendum + (hermesReady ? HermesTools.instructionsAddendum : HermesTools.unavailableInstructions),
                     providers: providers, glasses: glasses,
                     injectFrames: glasses.isAvailable,
-                    tools: hermesReady ? HermesTools.all : [])
+                    tools: GlassesTools.all + (hermesReady ? HermesTools.all : []))
             }
         }
         // Voice commands route through hermes; late replies get spoken when they land.

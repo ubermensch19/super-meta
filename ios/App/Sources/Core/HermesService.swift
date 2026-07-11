@@ -2,9 +2,8 @@ import Foundation
 import SwiftUI
 import AgentGateway
 
-/// Link to a Hermes Agent backend (`hermes serve`): chat with streamed replies,
-/// session status, task spawning, and outbound channel messages over the
-/// backend's JSON-RPC WebSocket. Owns its own endpoint config (host/port/token).
+/// Link to Hermes Agent's authenticated API server. Gemini function calls are
+/// delegated here; Hermes then owns execution of its configured tools.
 @MainActor
 final class HermesService: ObservableObject {
     @Published private(set) var state: GatewayConnectionState = .disconnected
@@ -38,19 +37,12 @@ final class HermesService: ObservableObject {
         set { KeychainStore.set(newValue, for: "hermes_token"); objectWillChange.send() }
     }
 
-    /// Optional launch-time endpoint override (`HERMES_ENDPOINT=ws://host:port?token=…`),
-    /// handy for wiring the app to a local `hermes serve` without pairing UI.
+    /// Optional launch-time endpoint override (`HERMES_ENDPOINT=https://host:port#token=…`).
     private static let envEndpoint = ProcessInfo.processInfo.environment["HERMES_ENDPOINT"]
         .flatMap { HermesPairingView.parseEndpoint($0) }
 
-    /// Built-in default Hermes endpoint so the app connects out of the box with
-    /// no pairing. The public tunnel URL rotates each time cloudflared restarts;
-    /// update this string (or pair a new URL in-app, which overrides it).
-    static let hardcodedURL = "wss://totally-mime-specials-york.trycloudflare.com?token=sylOyf6g4HHbqQb-_4WzTYcu0Y5lVVKz"
-    private static let hardcoded = HermesPairingView.parseEndpoint(hardcodedURL)
-
-    /// The endpoint to use, in priority order: launch override → a URL the user
-    /// paired in-app → the built-in hardcoded default.
+    /// The endpoint to use, in priority order: launch override, then an address
+    /// explicitly paired by the user. Never use an expiring public tunnel.
     private static func resolvedConfig(_ defaults: UserDefaults) -> HermesConfig {
         if let env = envEndpoint {
             return HermesConfig(host: env.host, port: env.port, useTLS: env.tls, token: env.token ?? "")
@@ -60,23 +52,37 @@ final class HermesService: ObservableObject {
             let savedPort = defaults.integer(forKey: "hermes_port")
             return HermesConfig(
                 host: defaults.string(forKey: "hermes_host") ?? "127.0.0.1",
-                port: savedPort == 0 ? 9119 : savedPort,
+                port: savedPort == 0 ? 8642 : savedPort,
                 useTLS: defaults.bool(forKey: "hermes_tls"),
                 token: saved
             )
-        }
-        if let hc = hardcoded {
-            return HermesConfig(host: hc.host, port: hc.port, useTLS: hc.tls, token: hc.token ?? "")
         }
         return HermesConfig()
     }
 
     var isConfigured: Bool {
-        Self.envEndpoint != nil || Self.hardcoded != nil || !token.isEmpty
-            || UserDefaults.standard.bool(forKey: "hermes_use_mock")
+        Self.envEndpoint != nil || !token.isEmpty || UserDefaults.standard.bool(forKey: "hermes_use_mock")
     }
 
     init(api: OperatorAPI? = nil) {
+        // Remove the retired rotating tunnel from earlier builds. Its credential
+        // was not a durable Hermes API pairing and otherwise leaves the UI stuck
+        // attempting an endpoint that no longer exists.
+        if defaults.string(forKey: "hermes_host") == "totally-mime-specials-york.trycloudflare.com" {
+            defaults.removeObject(forKey: "hermes_host")
+            defaults.removeObject(forKey: "hermes_port")
+            defaults.removeObject(forKey: "hermes_tls")
+            KeychainStore.set("", for: "hermes_token")
+        }
+        // Debug/managed launches can supply a complete endpoint once. Persist it
+        // exactly like an in-app pairing so reconnects do not depend on a
+        // development environment variable.
+        if let env = Self.envEndpoint {
+            defaults.set(env.host, forKey: "hermes_host")
+            defaults.set(env.port, forKey: "hermes_port")
+            defaults.set(env.tls, forKey: "hermes_tls")
+            if let token = env.token, !token.isEmpty { KeychainStore.set(token, for: "hermes_token") }
+        }
         let initial = Self.resolvedConfig(defaults)
         self.host = initial.host
         self.port = initial.port
@@ -93,8 +99,8 @@ final class HermesService: ObservableObject {
         self.api.onStateChange = { [weak self] in self?.state = $0 }
         self.api.onAgentEvent = { [weak self] in self?.handleAgentEvent($0) }
 
-        // A configured endpoint (env, paired, or hardcoded default) connects right
-        // away so the link is live app-wide, not only once the Hermes screen opens.
+        // A paired endpoint connects right away so the link is live app-wide,
+        // not only once the Hermes screen opens.
         if isConfigured && !UserDefaults.standard.bool(forKey: "hermes_use_mock") {
             Task { @MainActor [weak self] in self?.connect() }
         }
@@ -198,6 +204,17 @@ final class HermesService: ObservableObject {
         let args = (try? JSONSerialization.jsonObject(with: Data(argumentsJSON.utf8))) as? [String: Any] ?? [:]
         do {
             switch name {
+            case "hermes_execute":
+                guard let task = args["task"] as? String, !task.isEmpty else {
+                    return Self.toolJSON(["error": "Missing task"])
+                }
+                if let reply = try await askWithBudget(task) {
+                    return Self.toolJSON(["reply": reply])
+                }
+                return Self.toolJSON([
+                    "status": "working",
+                    "note": "Hermes is continuing the task. The final result will be announced when it arrives."
+                ])
             case "hermes_ask":
                 guard let question = args["question"] as? String, !question.isEmpty else {
                     return Self.toolJSON(["error": "Missing question"])

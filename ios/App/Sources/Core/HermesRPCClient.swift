@@ -4,16 +4,16 @@ import AgentGateway
 
 private let log = Logger(subsystem: "com.priyanshu.metamod", category: "HermesRPC")
 
-/// Endpoint for a Hermes Agent backend (`hermes serve`), which speaks
-/// newline-delimited JSON-RPC 2.0 over a WebSocket at `/api/ws`. On a loopback
-/// bind the session token authenticates via the `?token=` query param.
+/// Endpoint for Hermes Agent's OpenAI-compatible API server. The server is
+/// normally run by `hermes gateway` and authenticates every agent request with
+/// an `API_SERVER_KEY` bearer token.
 struct HermesConfig: Sendable, Equatable {
     var host: String
     var port: Int
     var useTLS: Bool
     var token: String
 
-    init(host: String = "127.0.0.1", port: Int = 9119, useTLS: Bool = false, token: String = "") {
+    init(host: String = "127.0.0.1", port: Int = 8642, useTLS: Bool = false, token: String = "") {
         self.host = host
         self.port = port
         self.useTLS = useTLS
@@ -28,6 +28,134 @@ struct HermesConfig: Sendable, Equatable {
         components.path = "/api/ws"
         if !token.isEmpty { components.queryItems = [URLQueryItem(name: "token", value: token)] }
         return components.url
+    }
+
+    func apiURL(path: String) -> URL? {
+        var components = URLComponents()
+        components.scheme = useTLS ? "https" : "http"
+        components.host = host
+        components.port = port
+        components.path = path
+        return components.url
+    }
+}
+
+struct HermesAPIReply: Sendable {
+    let text: String
+    let sessionID: String?
+}
+
+/// HTTP bridge modelled after VisionClaw's authenticated agent delegate. It
+/// uses Hermes' supported `/v1/chat/completions` API rather than the dashboard
+/// WebSocket, whose remote authentication is browser-session based.
+@MainActor
+final class HermesHTTPClient: ObservableObject {
+    @Published private(set) var state: GatewayConnectionState = .disconnected
+
+    private let config: HermesConfig
+    private let session: URLSession
+    private var connectTask: Task<Void, Never>?
+
+    init(config: HermesConfig, session: URLSession = .shared) {
+        self.config = config
+        self.session = session
+    }
+
+    func connect() {
+        guard state != .connecting, state != .connected else { return }
+        guard !config.token.isEmpty else {
+            state = .error("Hermes API key is missing. Pair a URL that includes #token=…")
+            return
+        }
+        state = .connecting
+        connectTask?.cancel()
+        connectTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                _ = try await self.request(path: "/v1/models", method: "GET")
+                guard !Task.isCancelled else { return }
+                self.state = .connected
+            } catch {
+                guard !Task.isCancelled else { return }
+                self.state = .error(error.localizedDescription)
+            }
+        }
+    }
+
+    func disconnect() {
+        connectTask?.cancel()
+        connectTask = nil
+        state = .disconnected
+    }
+
+    func waitUntilConnected(timeout: TimeInterval = 10) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            switch state {
+            case .connected: return
+            case let .error(message): throw GatewayError(code: "CONNECT_FAILED", message: message)
+            case .waitingForPairing: throw GatewayError(code: "UNAUTHORIZED", message: "Hermes rejected the API key")
+            case .disconnected, .connecting:
+                try await Task.sleep(nanoseconds: 100_000_000)
+            }
+        }
+        throw GatewayError(code: "TIMEOUT", message: "Hermes API connection timed out")
+    }
+
+    func chat(text: String, sessionID: String?, sessionKey: String) async throws -> HermesAPIReply {
+        let body: [String: Any] = [
+            "model": "hermes-agent",
+            "messages": [["role": "user", "content": text]],
+            "stream": false
+        ]
+        let data = try await request(path: "/v1/chat/completions", method: "POST", body: body, extraHeaders: [
+            "X-Hermes-Session-Key": sessionKey,
+            "X-Hermes-Session-Id": sessionID ?? ""
+        ])
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let choices = json["choices"] as? [[String: Any]],
+              let message = choices.first?["message"] as? [String: Any],
+              let response = message["content"] as? String, !response.isEmpty else {
+            throw GatewayError(code: "BAD_RESPONSE", message: "Hermes returned no assistant response")
+        }
+        let returnedSession = (json["hermes"] as? [String: Any])?["session_id"] as? String
+        return HermesAPIReply(text: response, sessionID: returnedSession)
+    }
+
+    func listSessions() async throws -> [[String: Any]] {
+        let data = try await request(path: "/api/sessions?limit=50", method: "GET")
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        return json?["data"] as? [[String: Any]] ?? []
+    }
+
+    private func request(
+        path: String,
+        method: String,
+        body: [String: Any]? = nil,
+        extraHeaders: [String: String] = [:]
+    ) async throws -> Data {
+        guard let url = config.apiURL(path: path) else {
+            throw GatewayError(code: "INVALID_URL", message: "Invalid Hermes API URL")
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        request.timeoutInterval = 120
+        request.setValue("Bearer \(config.token)", forHTTPHeaderField: "Authorization")
+        extraHeaders.forEach { request.setValue($0.value, forHTTPHeaderField: $0.key) }
+        if let body {
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        }
+        let (data, response) = try await session.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw GatewayError(code: "NO_RESPONSE", message: "Hermes did not return an HTTP response")
+        }
+        guard (200...299).contains(http.statusCode) else {
+            let error = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? [String: Any]
+            let message = error?["message"] as? String ?? "Hermes API returned HTTP \(http.statusCode)"
+            throw GatewayError(code: "HTTP_\(http.statusCode)", message: message)
+        }
+        return data
     }
 }
 

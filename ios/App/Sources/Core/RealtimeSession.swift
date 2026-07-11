@@ -45,10 +45,9 @@ final class RealtimeSession: ObservableObject {
     ) {
         self.providers = providers
         self.glasses = glasses
-        let vendor = providers.realtimeVendor
         let key = providers.realtimeAPIKey()
         guard !key.isEmpty else {
-            status = .error("Add your \(vendor.displayName) API key in Settings for realtime voice.")
+            status = .error("Add your Gemini API key in Settings for realtime voice.")
             return
         }
         status = .connecting
@@ -58,37 +57,34 @@ final class RealtimeSession: ObservableObject {
         pendingResponseCreate = false
         announcementQueue = []
 
-        // The wake-word listener and a live session both want the mic/HFP route;
-        // release the listener while we're connected, revive it on stop().
-        WakeWordListener.shared.pause()
-
-        // Gemini Live is the default; OpenAI Realtime stays available. Gemini needs
-        // 16 kHz mic input, OpenAI 24 kHz.
         let config = RealtimeConfig(model: providers.realtimeModel, voice: voice, instructions: instructions, audio: true, tools: tools)
-        let client: any RealtimeClient
-        let captureRate: Double
-        if vendor == .gemini {
-            client = GeminiLiveClient(apiKey: key, config: config)
-            captureRate = 16_000
-        } else {
-            client = OpenAIRealtimeClient(apiKey: key, config: config)
-            captureRate = 24_000
+        // The wake listener and Gemini Live cannot own the glasses mic together.
+        // Wait for its serial audio queue to finish teardown before starting Live.
+        WakeWordListener.shared.pause { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.beginGeminiLive(config: config, apiKey: key, injectFrames: injectFrames)
+            }
         }
+    }
+
+    private func beginGeminiLive(config: RealtimeConfig, apiKey: String, injectFrames: Bool) {
+        guard status == .connecting else { return }
+        let client: any RealtimeClient = GeminiLiveClient(apiKey: apiKey, config: config)
         self.client = client
 
         eventTask = Task { [weak self] in
             guard let self else { return }
             for await event in client.events {
-                await self.handle(event)
+                self.handle(event)
             }
         }
 
         do {
-            try audio.start(captureSampleRate: captureRate) { [weak client] chunk in client?.appendAudio(chunk) }
+            try audio.start(captureSampleRate: 16_000) { [weak client] chunk in client?.appendAudio(chunk) }
             client.connect()
             if injectFrames { startFrameInjection() }
         } catch {
-            status = .error("Audio error: \(error.localizedDescription)")
+            endWithError("Audio error: \(error.localizedDescription)")
         }
     }
 
@@ -132,7 +128,7 @@ final class RealtimeSession: ObservableObject {
         case let .functionCall(name, callID, argumentsJSON):
             runTool(name: name, callID: callID, argumentsJSON: argumentsJSON)
         case let .error(message):
-            status = .error(message)
+            endWithError(message)
         case .other:
             break
         }
@@ -140,15 +136,47 @@ final class RealtimeSession: ObservableObject {
 
     private func runTool(name: String, callID: String, argumentsJSON: String) {
         Task { @MainActor [weak self] in
-            let output = await self?.toolHandler?(name, argumentsJSON)
-                ?? #"{"error":"No agent is configured for tools"}"#
             guard let self, let client = self.client else { return }
+            let output: String
+            if GlassesTools.all.contains(where: { $0.name == name }) {
+                output = await self.handleGlassesTool(name: name, argumentsJSON: argumentsJSON, client: client)
+            } else {
+                output = await self.toolHandler?(name, argumentsJSON)
+                    ?? #"{"error":"No agent is configured for tools"}"#
+            }
             client.sendFunctionOutput(callID: callID, output: output)
             if self.responseInFlight {
                 self.pendingResponseCreate = true
             } else {
                 client.createResponse()
             }
+        }
+    }
+
+    private func handleGlassesTool(name: String, argumentsJSON: String, client: any RealtimeClient) async -> String {
+        guard let glasses else { return #"{"error":"Glasses are unavailable"}"# }
+        switch name {
+        case "glasses_start_camera":
+            await glasses.startStreaming()
+            return glasses.isStreaming ? #"{"status":"camera started"}"# : #"{"error":"Camera did not start"}"#
+        case "glasses_stop_camera":
+            await glasses.stopStreaming()
+            return #"{"status":"camera stopped"}"#
+        case "glasses_look", "glasses_take_photo":
+            if !glasses.isStreaming { await glasses.startStreaming() }
+            let image: Data?
+            if let latest = glasses.currentFrameJPEG(maxWidth: 1280, quality: 0.75) {
+                image = latest
+            } else {
+                image = try? await glasses.capturePhoto()
+            }
+            guard let image else { return #"{"error":"No glasses image is available. Make sure the glasses are connected and camera permission is granted."}"# }
+            let args = (try? JSONSerialization.jsonObject(with: Data(argumentsJSON.utf8))) as? [String: Any]
+            let note = args?["question"] as? String ?? (name == "glasses_look" ? "Describe exactly what is visible in this fresh glasses image." : "The wearer requested this photo. Confirm it was captured and describe it if useful.")
+            client.sendImage(image, note: note)
+            return #"{"status":"fresh glasses image sent to Gemini"}"#
+        default:
+            return #"{"error":"Unknown glasses tool"}"#
         }
     }
 
@@ -160,6 +188,18 @@ final class RealtimeSession: ObservableObject {
         } else if !announcementQueue.isEmpty {
             client.sendText(announcementQueue.removeFirst())
         }
+    }
+
+    /// A failed connection must release the microphone for the wake listener.
+    /// Otherwise an invalid Live setup leaves "Hey Gemini" permanently paused.
+    private func endWithError(_ message: String) {
+        frameTask?.cancel(); frameTask = nil
+        eventTask?.cancel(); eventTask = nil
+        audio.stop()
+        client?.disconnect()
+        client = nil
+        status = .error(message)
+        WakeWordListener.shared.resume()
     }
 
     private func startFrameInjection() {
