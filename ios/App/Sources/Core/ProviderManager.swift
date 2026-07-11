@@ -43,11 +43,11 @@ final class ProviderManager: ObservableObject {
         self.visionVendor = savedVendor
         let savedRealtimeVendor = defaults.string(forKey: Keys.realtimeVendor).flatMap(AIVendor.init) ?? .gemini
         self.realtimeVendor = savedRealtimeVendor
-        var rtModel = defaults.string(forKey: Keys.realtimeModel) ?? "gemini-3.1-flash-live-preview"
+        var rtModel = defaults.string(forKey: Keys.realtimeModel) ?? "gemini-2.5-flash-native-audio-latest"
         // Keep the model consistent with the vendor so a value persisted before the
         // Gemini switch (e.g. "gpt-realtime-2") can't pair with the Gemini client.
         if savedRealtimeVendor == .gemini, !rtModel.lowercased().contains("gemini") {
-            rtModel = "gemini-3.1-flash-live-preview"
+            rtModel = "gemini-2.5-flash-native-audio-latest"
         } else if savedRealtimeVendor == .openAI, rtModel.lowercased().contains("gemini") {
             rtModel = "gpt-realtime"
         }
