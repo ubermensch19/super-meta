@@ -13,12 +13,21 @@ final class ProviderManager: ObservableObject {
         didSet { defaults.set(visionVendor.rawValue, forKey: Keys.visionVendor) }
     }
 
+    /// The OpenAI Realtime model that Live AI / Live Translate connect to.
+    @Published var realtimeModel: String {
+        didSet { defaults.set(realtimeModel, forKey: Keys.realtimeModel) }
+    }
+
+    /// Curated realtime model ids offered in Settings; a custom id can also be typed.
+    static let knownRealtimeModels = ["gpt-realtime", "gpt-realtime-2"]
+
     /// Per-vendor selected model id.
     @Published private(set) var models: [AIVendor: String]
 
     private let defaults = UserDefaults.standard
     private enum Keys {
         static let visionVendor = "vision_vendor"
+        static let realtimeModel = "realtime_model"
         static func model(_ v: AIVendor) -> String { "model_\(v.rawValue)" }
         static func key(_ v: AIVendor) -> String { "apikey_\(v.rawValue)" }
     }
@@ -26,6 +35,7 @@ final class ProviderManager: ObservableObject {
     private init() {
         let savedVendor = defaults.string(forKey: Keys.visionVendor).flatMap(AIVendor.init) ?? .gemini
         self.visionVendor = savedVendor
+        self.realtimeModel = defaults.string(forKey: Keys.realtimeModel) ?? "gpt-realtime"
         var loaded: [AIVendor: String] = [:]
         for vendor in AIVendor.allCases {
             loaded[vendor] = defaults.string(forKey: Keys.model(vendor)) ?? vendor.defaultModel
