@@ -18,3 +18,8 @@ xcuserdata/
 
 # Secrets / local config
 *.xcconfig.local
+ios/Config/Secrets.xcconfig
+.gstack/
+
+# Local reference codebases (study-only, not part of the build)
+resources/
