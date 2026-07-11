@@ -34,7 +34,7 @@ struct RTMPStreamView: View {
         .navigationTitle("Live Stream")
         .navigationBarTitleDisplayMode(.inline)
         .toolbarBackground(.hidden, for: .navigationBar)
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(.light)
         .contentShape(Rectangle())
         .onTapGesture { if isStreaming { withAnimation(.easeInOut(duration: 0.2)) { chromeVisible.toggle() } } }
         .task { streamKey = KeychainStore.get("rtmp_stream_key") ?? "" }

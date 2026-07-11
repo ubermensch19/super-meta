@@ -24,7 +24,7 @@ struct LiveAIView: View {
         .background(Theme.Palette.canvas.ignoresSafeArea())
         .navigationTitle("Live AI")
         .navigationBarTitleDisplayMode(.inline)
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(.light)
         .enableInjection()
         // No onDisappear stop: the session is shared and may have been started by
         // the wake word. The Stop button and app termination end it.

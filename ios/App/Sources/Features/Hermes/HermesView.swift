@@ -49,7 +49,7 @@ struct HermesView: View {
         .background(Theme.Palette.canvas.ignoresSafeArea())
         .navigationTitle("Hermes")
         .navigationBarTitleDisplayMode(.inline)
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(.light)
         .sheet(isPresented: $showPairing) { HermesPairingView() }
         .sheet(isPresented: $showTaskSheet) { SpawnTaskSheet() }
         .sheet(isPresented: $showMessageSheet) { ChannelMessageSheet() }
@@ -322,7 +322,7 @@ private struct SpawnTaskSheet: View {
                 }
             }
         }
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(.light)
     }
 
     private func start() {
@@ -389,7 +389,7 @@ private struct ChannelMessageSheet: View {
                 }
             }
         }
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(.light)
     }
 
     private func send() {

@@ -66,7 +66,7 @@ struct VisionRecognitionView: View {
         .background(Theme.Palette.canvas.ignoresSafeArea())
         .navigationTitle("Vision Chat")
         .navigationBarTitleDisplayMode(.inline)
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(.light)
         .enableInjection()
     }
 
