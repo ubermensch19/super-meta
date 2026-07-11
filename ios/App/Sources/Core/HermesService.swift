@@ -2,10 +2,9 @@ import Foundation
 import SwiftUI
 import AgentGateway
 
-/// Operator-side link to the OpenClaw/Hermes agent: chat with streamed replies,
-/// session status, task spawning, and outbound channel messages. Shares endpoint
-/// config and device identity with the node-role `GatewayService` but runs its
-/// own connection, so agent control and camera duty fail independently.
+/// Link to a Hermes Agent backend (`hermes serve`): chat with streamed replies,
+/// session status, task spawning, and outbound channel messages over the
+/// backend's JSON-RPC WebSocket. Owns its own endpoint config (host/port/token).
 @MainActor
 final class HermesService: ObservableObject {
     @Published private(set) var state: GatewayConnectionState = .disconnected
@@ -13,34 +12,76 @@ final class HermesService: ObservableObject {
     @Published private(set) var sessions: [AgentSessionInfo] = []
     /// In-flight reply text for the focused session, streamed as it arrives.
     @Published private(set) var streamingReply = ""
-    @Published var focusedSessionKey = "main"
+    @Published var focusedSessionKey = HermesOperatorAPI.activeSessionKey
+
+    // Endpoint config (non-secret in UserDefaults, token in Keychain).
+    @Published var host: String { didSet { defaults.set(host, forKey: "hermes_host") } }
+    @Published var port: Int { didSet { defaults.set(port, forKey: "hermes_port") } }
+    @Published var useTLS: Bool { didSet { defaults.set(useTLS, forKey: "hermes_tls") } }
 
     /// Fires with the full reply of a run whose voice-budgeted ask already gave
     /// up — the voice layer announces these late answers.
     var onLateReply: ((String) -> Void)?
 
+    private let defaults = UserDefaults.standard
     private let api: OperatorAPI
-    private let gateway: GatewayService
     private struct ReplyBox: @unchecked Sendable { let text: String }
     private var pendingReplies: [String: CheckedContinuation<ReplyBox, Error>] = [:]
     /// Runs that outlived their voice budget; their finals go to `onLateReply`.
     private var lateReplyRuns: Set<String> = []
+    /// Live gateway session handle of the in-flight `ask`, used to match its
+    /// streamed reply events (which are keyed by that handle, not the UI focus).
+    private var activeRunSessionID: String?
 
-    var isConfigured: Bool { !gateway.token.isEmpty || UserDefaults.standard.bool(forKey: "hermes_use_mock") }
+    var token: String {
+        get { KeychainStore.get("hermes_token") ?? "" }
+        set { KeychainStore.set(newValue, for: "hermes_token"); objectWillChange.send() }
+    }
 
-    init(gateway: GatewayService, api: OperatorAPI? = nil) {
-        self.gateway = gateway
+    /// Optional launch-time endpoint override (`HERMES_ENDPOINT=ws://host:port?token=…`),
+    /// handy for wiring the app to a local `hermes serve` without pairing UI.
+    private static let envEndpoint = ProcessInfo.processInfo.environment["HERMES_ENDPOINT"]
+        .flatMap { HermesPairingView.parseEndpoint($0) }
+
+    var isConfigured: Bool {
+        Self.envEndpoint != nil || !token.isEmpty || UserDefaults.standard.bool(forKey: "hermes_use_mock")
+    }
+
+    init(api: OperatorAPI? = nil) {
+        let env = Self.envEndpoint
+        self.host = env?.host ?? defaults.string(forKey: "hermes_host") ?? "127.0.0.1"
+        let savedPort = defaults.integer(forKey: "hermes_port")
+        self.port = env?.port ?? (savedPort == 0 ? 9119 : savedPort)
+        self.useTLS = env?.tls ?? defaults.bool(forKey: "hermes_tls")
+
         if let api {
             self.api = api
         } else if UserDefaults.standard.bool(forKey: "hermes_use_mock") {
             self.api = MockOperatorAPI()
         } else {
-            self.api = GatewayOperatorAPI(identity: gateway.identity) {
-                GatewayConfig(host: gateway.host, port: gateway.port, useTLS: gateway.useTLS, token: gateway.token)
+            let defaults = self.defaults
+            self.api = HermesOperatorAPI {
+                if let env = HermesService.envEndpoint {
+                    return HermesConfig(host: env.host, port: env.port, useTLS: env.tls, token: env.token ?? "")
+                }
+                let host = defaults.string(forKey: "hermes_host") ?? "127.0.0.1"
+                let savedPort = defaults.integer(forKey: "hermes_port")
+                return HermesConfig(
+                    host: host,
+                    port: savedPort == 0 ? 9119 : savedPort,
+                    useTLS: defaults.bool(forKey: "hermes_tls"),
+                    token: KeychainStore.get("hermes_token") ?? ""
+                )
             }
         }
         self.api.onStateChange = { [weak self] in self?.state = $0 }
         self.api.onAgentEvent = { [weak self] in self?.handleAgentEvent($0) }
+
+        // With an explicit launch endpoint, connect right away so the link is
+        // live app-wide (not only once the Hermes screen appears).
+        if Self.envEndpoint != nil {
+            Task { @MainActor [weak self] in self?.connect() }
+        }
     }
 
     /// Whether the user asked for a live link (drives foreground resync).
@@ -93,7 +134,11 @@ final class HermesService: ObservableObject {
         let key = sessionKey ?? focusedSessionKey
         messages.append(HermesChatMessage(role: .user, text: text))
         streamingReply = ""
-        return try await api.chatSend(sessionKey: key, text: text)
+        // chatSend returns the live gateway session handle; reply events are
+        // keyed by it, so track it for streaming/transcript matching.
+        let runID = try await api.chatSend(sessionKey: key, text: text)
+        activeRunSessionID = runID
+        return runID
     }
 
     private func awaitReply(runID: String, timeout: TimeInterval) async throws -> String {
@@ -194,7 +239,7 @@ final class HermesService: ObservableObject {
     private func handleAgentEvent(_ event: OperatorAgentEvent) {
         switch event {
         case let .replyDelta(sessionKey, _, cumulative, delta):
-            guard sessionKeysMatch(sessionKey, focusedSessionKey) else { return }
+            guard isActiveRun(sessionKey) else { return }
             if let cumulative {
                 streamingReply = cumulative
             } else if let delta {
@@ -202,7 +247,7 @@ final class HermesService: ObservableObject {
             }
         case let .replyFinal(sessionKey, runID, text):
             let reply = text.isEmpty ? streamingReply : text
-            if sessionKeysMatch(sessionKey, focusedSessionKey) {
+            if isActiveRun(sessionKey) {
                 streamingReply = ""
                 messages.append(HermesChatMessage(role: .hermes, text: reply))
             }
@@ -213,7 +258,7 @@ final class HermesService: ObservableObject {
                 onLateReply?(reply)
             }
         case let .replyFailed(sessionKey, runID, message):
-            if sessionKeysMatch(sessionKey, focusedSessionKey) {
+            if isActiveRun(sessionKey) {
                 streamingReply = ""
                 messages.append(HermesChatMessage(role: .system, text: "Run failed: \(message)"))
             }
@@ -230,6 +275,11 @@ final class HermesService: ObservableObject {
         let waiting = pendingReplies
         pendingReplies.removeAll()
         for continuation in waiting.values { continuation.resume(throwing: error) }
+    }
+
+    private func isActiveRun(_ sessionKey: String) -> Bool {
+        guard let active = activeRunSessionID else { return false }
+        return sessionKey == active
     }
 
     private func shortKey(_ key: String) -> String {

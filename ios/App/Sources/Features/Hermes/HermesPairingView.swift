@@ -108,10 +108,10 @@ struct HermesPairingView: View {
             return
         }
         errorText = nil
-        gateway.host = endpoint.host
-        gateway.port = endpoint.port
-        gateway.useTLS = endpoint.tls
-        if let token = endpoint.token { gateway.token = token }
+        hermes.host = endpoint.host
+        hermes.port = endpoint.port
+        hermes.useTLS = endpoint.tls
+        if let token = endpoint.token { hermes.token = token }
         hermes.connect()
         Task {
             try? await Task.sleep(nanoseconds: 500_000_000)
@@ -144,7 +144,7 @@ struct HermesPairingView: View {
         }
 
         let tls = components.scheme == "wss" || components.scheme == "https"
-        let port = components.port ?? (tls ? 443 : 18789)
+        let port = components.port ?? (tls ? 443 : 9119)
         return (host, port, tls, token)
     }
 }
