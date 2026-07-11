@@ -60,13 +60,18 @@ private func listOpenAIModels(apiKey: String, session: URLSession) async throws 
     let data = try await HTTP.send(request, session: session)
     guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
           let models = json["data"] as? [[String: Any]] else { return [] }
-    let excluded = ["whisper", "tts", "embedding", "dall-e", "moderation", "audio", "image", "transcribe", "search", "babbage", "davinci"]
+    // Vision/chat picker: exclude non-chat model families. `realtime` and `audio`
+    // models only work on the Realtime API, not v1/chat/completions — offering them
+    // here produces "This is not a chat model" 404s.
+    let excluded = ["whisper", "tts", "embedding", "dall-e", "moderation", "audio",
+                    "image", "transcribe", "search", "babbage", "davinci", "realtime", "codex"]
     let parsed = models.compactMap { entry -> AIModelInfo? in
         guard let id = entry["id"] as? String else { return nil }
         if excluded.contains(where: id.contains) { return nil }
         return AIModelInfo(id: id, name: id)
     }
-    return prioritized(parsed, ["gpt-5.5", "gpt-5", "gpt-realtime", "o4", "o3", "gpt-4.1", "gpt-4o", "gpt-4", "o1"])
+    // Lead with proven multimodal chat models so the first-listed option always works.
+    return prioritized(parsed, ["gpt-4o", "gpt-4.1", "gpt-5", "o4", "o3", "gpt-4", "o1"])
 }
 
 private func listClaudeModels(apiKey: String, session: URLSession) async throws -> [AIModelInfo] {
