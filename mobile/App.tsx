@@ -9,6 +9,7 @@ import HomeScreen from './src/screens/HomeScreen';
 import PlaceholderScreen from './src/screens/PlaceholderScreen';
 import AgentLinkScreen from './src/screens/AgentLinkScreen';
 import AgentSessionScreen from './src/screens/AgentSessionScreen';
+import LiveStreamScreen from './src/screens/LiveStreamScreen';
 import { GatewayProvider } from './src/gateway/GatewayProvider';
 import { RootStackParamList, RouteName, SEE, CONNECT } from './src/navigation';
 
@@ -62,8 +63,9 @@ export default function App() {
           <Stack.Screen name="Home" component={HomeScreen} options={{ headerShown: false }} />
           <Stack.Screen name="AgentLink" component={AgentLinkScreen} options={{ title: 'Agent Link' }} />
           <Stack.Screen name="AgentSession" component={AgentSessionScreen} options={{ title: 'Agent Session' }} />
+          <Stack.Screen name="LiveStream" component={LiveStreamScreen} options={{ title: 'Live Stream' }} />
           {(Object.keys(BLURBS) as RouteName[])
-            .filter((route) => route !== 'AgentLink')
+            .filter((route) => route !== 'AgentLink' && route !== 'LiveStream')
             .map((route) => (
               <Stack.Screen key={route} name={route} options={{ title: BLURBS[route]!.title }}>
                 {() => <PlaceholderScreen title={BLURBS[route]!.title} blurb={BLURBS[route]!.blurb} />}
