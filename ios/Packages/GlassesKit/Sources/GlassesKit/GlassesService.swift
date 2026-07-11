@@ -78,6 +78,11 @@ public final class GlassesService: ObservableObject {
     private var photoToken: AnyListenerToken?
     private var deviceTask: Task<Void, Never>?
     private var registrationTask: Task<Void, Never>?
+    // A device only becomes reachable once the app opens a session with it. While
+    // linked we keep a lightweight DeviceStateSession running so the glasses
+    // actually connect (and show as "connected") without needing to open the camera.
+    private var deviceStateSession: DeviceStateSession?
+    private var deviceMonitorTask: Task<Void, Never>?
     private var isProcessingFrame = false
     private var photoContinuation: CheckedContinuation<Data, Error>?
 
@@ -167,12 +172,50 @@ public final class GlassesService: ObservableObject {
 
     private func observeRegistration(_ wearables: WearablesInterface) {
         registration = map(wearables.registrationState)
+        syncDeviceMonitoring()
         registrationTask = Task { @MainActor [weak self] in
             guard let self else { return }
             for await state in wearables.registrationStateStream() {
                 self.registration = self.map(state)
+                self.syncDeviceMonitoring()
             }
         }
+    }
+
+    /// Keeps a DeviceStateSession running exactly while registered. Its `.running`
+    /// state is the real "glasses connected" signal — being registered alone leaves
+    /// the device idle ("Linked · turn on glasses") until a session brings it online.
+    private func syncDeviceMonitoring() {
+        if registration == .registered {
+            startDeviceMonitoring()
+        } else {
+            stopDeviceMonitoring()
+        }
+    }
+
+    private func startDeviceMonitoring() {
+        guard deviceStateSession == nil, let selector = deviceSelector else { return }
+        let session = DeviceStateSession(deviceSelector: selector)
+        deviceStateSession = session
+        deviceMonitorTask = Task { @MainActor [weak self] in
+            try? await session.start()
+            while !Task.isCancelled {
+                let connected = (session.state == .running)
+                if let self, self.hasActiveDevice != connected {
+                    self.hasActiveDevice = connected
+                    if connected, self.wantsStreaming, !self.isStreaming { await self.startStreaming() }
+                }
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
+            }
+        }
+    }
+
+    private func stopDeviceMonitoring() {
+        deviceMonitorTask?.cancel(); deviceMonitorTask = nil
+        let session = deviceStateSession
+        deviceStateSession = nil
+        hasActiveDevice = false
+        Task { try? await session?.stop() }
     }
 
     private func map(_ state: RegistrationState) -> GlassesRegistration {
@@ -187,10 +230,8 @@ public final class GlassesService: ObservableObject {
         deviceTask = Task { @MainActor [weak self] in
             guard let self else { return }
             for await device in selector.activeDeviceStream() {
-                self.hasActiveDevice = (device != nil)
-                // Device came back (e.g. the Meta app released it, or the glasses
-                // reconnected). Resume automatically if the user was streaming —
-                // no manual reconnect.
+                // hasActiveDevice is owned by the DeviceStateSession poll; here we
+                // only auto-resume streaming when the device reappears.
                 if device != nil, self.wantsStreaming, !self.isStreaming {
                     await self.startStreaming()
                 }
@@ -305,7 +346,7 @@ public final class GlassesService: ObservableObject {
 
     deinit {
         stateToken = nil; frameToken = nil; errorToken = nil; photoToken = nil
-        deviceTask?.cancel(); registrationTask?.cancel()
+        deviceTask?.cancel(); registrationTask?.cancel(); deviceMonitorTask?.cancel()
         if let foregroundToken { NotificationCenter.default.removeObserver(foregroundToken) }
     }
 }
