@@ -10,6 +10,9 @@ extension Notification.Name {
 final class AppRouter: ObservableObject {
     static let shared = AppRouter()
     @Published var showQuickVision = false
+    /// Set when the wake word fires so the app can surface the Live AI sheet
+    /// (with the live transcript) when it's next foregrounded.
+    @Published var liveAIWoke = false
 
     private init() {
         NotificationCenter.default.addObserver(
