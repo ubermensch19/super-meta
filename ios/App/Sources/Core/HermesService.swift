@@ -43,16 +43,44 @@ final class HermesService: ObservableObject {
     private static let envEndpoint = ProcessInfo.processInfo.environment["HERMES_ENDPOINT"]
         .flatMap { HermesPairingView.parseEndpoint($0) }
 
+    /// Built-in default Hermes endpoint so the app connects out of the box with
+    /// no pairing. The public tunnel URL rotates each time cloudflared restarts;
+    /// update this string (or pair a new URL in-app, which overrides it).
+    static let hardcodedURL = "wss://totally-mime-specials-york.trycloudflare.com?token=sylOyf6g4HHbqQb-_4WzTYcu0Y5lVVKz"
+    private static let hardcoded = HermesPairingView.parseEndpoint(hardcodedURL)
+
+    /// The endpoint to use, in priority order: launch override → a URL the user
+    /// paired in-app → the built-in hardcoded default.
+    private static func resolvedConfig(_ defaults: UserDefaults) -> HermesConfig {
+        if let env = envEndpoint {
+            return HermesConfig(host: env.host, port: env.port, useTLS: env.tls, token: env.token ?? "")
+        }
+        // A user-paired endpoint (saved token) takes precedence over the default.
+        if let saved = KeychainStore.get("hermes_token"), !saved.isEmpty {
+            let savedPort = defaults.integer(forKey: "hermes_port")
+            return HermesConfig(
+                host: defaults.string(forKey: "hermes_host") ?? "127.0.0.1",
+                port: savedPort == 0 ? 9119 : savedPort,
+                useTLS: defaults.bool(forKey: "hermes_tls"),
+                token: saved
+            )
+        }
+        if let hc = hardcoded {
+            return HermesConfig(host: hc.host, port: hc.port, useTLS: hc.tls, token: hc.token ?? "")
+        }
+        return HermesConfig()
+    }
+
     var isConfigured: Bool {
-        Self.envEndpoint != nil || !token.isEmpty || UserDefaults.standard.bool(forKey: "hermes_use_mock")
+        Self.envEndpoint != nil || Self.hardcoded != nil || !token.isEmpty
+            || UserDefaults.standard.bool(forKey: "hermes_use_mock")
     }
 
     init(api: OperatorAPI? = nil) {
-        let env = Self.envEndpoint
-        self.host = env?.host ?? defaults.string(forKey: "hermes_host") ?? "127.0.0.1"
-        let savedPort = defaults.integer(forKey: "hermes_port")
-        self.port = env?.port ?? (savedPort == 0 ? 9119 : savedPort)
-        self.useTLS = env?.tls ?? defaults.bool(forKey: "hermes_tls")
+        let initial = Self.resolvedConfig(defaults)
+        self.host = initial.host
+        self.port = initial.port
+        self.useTLS = initial.useTLS
 
         if let api {
             self.api = api
@@ -60,26 +88,14 @@ final class HermesService: ObservableObject {
             self.api = MockOperatorAPI()
         } else {
             let defaults = self.defaults
-            self.api = HermesOperatorAPI {
-                if let env = HermesService.envEndpoint {
-                    return HermesConfig(host: env.host, port: env.port, useTLS: env.tls, token: env.token ?? "")
-                }
-                let host = defaults.string(forKey: "hermes_host") ?? "127.0.0.1"
-                let savedPort = defaults.integer(forKey: "hermes_port")
-                return HermesConfig(
-                    host: host,
-                    port: savedPort == 0 ? 9119 : savedPort,
-                    useTLS: defaults.bool(forKey: "hermes_tls"),
-                    token: KeychainStore.get("hermes_token") ?? ""
-                )
-            }
+            self.api = HermesOperatorAPI { HermesService.resolvedConfig(defaults) }
         }
         self.api.onStateChange = { [weak self] in self?.state = $0 }
         self.api.onAgentEvent = { [weak self] in self?.handleAgentEvent($0) }
 
-        // With an explicit launch endpoint, connect right away so the link is
-        // live app-wide (not only once the Hermes screen appears).
-        if Self.envEndpoint != nil {
+        // A configured endpoint (env, paired, or hardcoded default) connects right
+        // away so the link is live app-wide, not only once the Hermes screen opens.
+        if isConfigured && !UserDefaults.standard.bool(forKey: "hermes_use_mock") {
             Task { @MainActor [weak self] in self?.connect() }
         }
     }

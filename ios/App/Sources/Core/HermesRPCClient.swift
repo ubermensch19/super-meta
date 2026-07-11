@@ -167,6 +167,7 @@ final class HermesRPCClient: ObservableObject {
         if (json["method"] as? String) == "event", let params = json["params"] as? [String: Any] {
             let type = params["type"] as? String ?? ""
             if type == "gateway.ready" {
+                log.notice("connected to Hermes gateway")
                 state = .connected
                 return
             }
