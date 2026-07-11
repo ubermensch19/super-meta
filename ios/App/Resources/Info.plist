@@ -76,6 +76,8 @@
 	</dict>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>Super Meta connects to your smart glasses over Bluetooth.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Super Meta uses the camera to scan your gateway's pairing QR code.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Super Meta uses the microphone for real-time voice conversations through your glasses.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
