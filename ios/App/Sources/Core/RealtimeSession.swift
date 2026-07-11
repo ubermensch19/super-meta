@@ -18,7 +18,7 @@ final class RealtimeSession: ObservableObject {
     /// Resolves a model function call to its JSON result (see `HermesService.handleToolCall`).
     var toolHandler: ((_ name: String, _ argumentsJSON: String) async -> String)?
 
-    private var client: OpenAIRealtimeClient?
+    private var client: (any RealtimeClient)?
     private let audio = RealtimeAudioEngine()
     private var eventTask: Task<Void, Never>?
     private var frameTask: Task<Void, Never>?
@@ -45,9 +45,10 @@ final class RealtimeSession: ObservableObject {
     ) {
         self.providers = providers
         self.glasses = glasses
-        let key = providers.apiKey(for: .openAI)
+        let vendor = providers.realtimeVendor
+        let key = providers.realtimeAPIKey()
         guard !key.isEmpty else {
-            status = .error("Add your OpenAI API key in Settings — realtime voice uses OpenAI.")
+            status = .error("Add your \(vendor.displayName) API key in Settings for realtime voice.")
             return
         }
         status = .connecting
@@ -61,7 +62,18 @@ final class RealtimeSession: ObservableObject {
         // release the listener while we're connected, revive it on stop().
         WakeWordListener.shared.pause()
 
-        let client = OpenAIRealtimeClient(apiKey: key, config: .init(model: providers.realtimeModel, voice: voice, instructions: instructions, audio: true, tools: tools))
+        // Gemini Live is the default; OpenAI Realtime stays available. Gemini needs
+        // 16 kHz mic input, OpenAI 24 kHz.
+        let config = RealtimeConfig(model: providers.realtimeModel, voice: voice, instructions: instructions, audio: true, tools: tools)
+        let client: any RealtimeClient
+        let captureRate: Double
+        if vendor == .gemini {
+            client = GeminiLiveClient(apiKey: key, config: config)
+            captureRate = 16_000
+        } else {
+            client = OpenAIRealtimeClient(apiKey: key, config: config)
+            captureRate = 24_000
+        }
         self.client = client
 
         eventTask = Task { [weak self] in
@@ -72,7 +84,7 @@ final class RealtimeSession: ObservableObject {
         }
 
         do {
-            try audio.start { [weak client] chunk in client?.appendAudio(chunk) }
+            try audio.start(captureSampleRate: captureRate) { [weak client] chunk in client?.appendAudio(chunk) }
             client.connect()
             if injectFrames { startFrameInjection() }
         } catch {
@@ -157,7 +169,7 @@ final class RealtimeSession: ObservableObject {
                 guard let self, self.status == .live, let glasses = self.glasses else { continue }
                 if !glasses.isStreaming { await glasses.startStreaming() }
                 if let jpeg = glasses.currentFrameJPEG(maxWidth: 1024, quality: 0.7) {
-                    self.client?.sendImage(jpeg)
+                    self.client?.sendImage(jpeg, note: "")
                 }
             }
         }

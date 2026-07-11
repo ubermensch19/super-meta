@@ -14,9 +14,10 @@ public final class RealtimeAudioEngine: @unchecked Sendable {
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
 
-    /// 24 kHz mono PCM16 — the Realtime API's audio format.
-    private let wireFormat = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 24_000, channels: 1, interleaved: true)!
-    /// Float32 @ 24 kHz for the player node.
+    /// Mic PCM16 wire format. Sample rate is chosen per provider in `start`
+    /// (24 kHz for OpenAI, 16 kHz for Gemini Live).
+    private var wireFormat = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 24_000, channels: 1, interleaved: true)!
+    /// Float32 @ 24 kHz for the player node (both providers emit 24 kHz audio).
     private let playFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 24_000, channels: 1, interleaved: false)!
 
     private var onMicChunk: (@Sendable (Data) -> Void)?
@@ -24,8 +25,9 @@ public final class RealtimeAudioEngine: @unchecked Sendable {
 
     public init() {}
 
-    public func start(onMicChunk: @escaping @Sendable (Data) -> Void) throws {
+    public func start(captureSampleRate: Double = 24_000, onMicChunk: @escaping @Sendable (Data) -> Void) throws {
         self.onMicChunk = onMicChunk
+        wireFormat = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: captureSampleRate, channels: 1, interleaved: true)!
 
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetooth])

@@ -158,7 +158,7 @@ final class WakeWordListener: ObservableObject {
 
     private init() {
         self.enabled = defaults.bool(forKey: Keys.enabled)
-        self.phrase = defaults.string(forKey: Keys.phrase) ?? "hey vision"
+        self.phrase = defaults.string(forKey: Keys.phrase) ?? "hey gemini"
 
         audio.onPartial = { [weak self] text in
             Task { @MainActor in self?.evaluate(text) }

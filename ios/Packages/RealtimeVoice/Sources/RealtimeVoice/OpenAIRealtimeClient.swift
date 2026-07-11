@@ -56,7 +56,7 @@ public struct RealtimeConfig: Sendable {
 
 /// WebSocket client for the OpenAI Realtime API. Cross-platform (no audio I/O here —
 /// see `RealtimeAudioEngine` for capture/playback). Exposes a normalized event stream.
-public final class OpenAIRealtimeClient: @unchecked Sendable {
+public final class OpenAIRealtimeClient: RealtimeClient, @unchecked Sendable {
     private let apiKey: String
     private let config: RealtimeConfig
     private let session: URLSession
