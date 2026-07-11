@@ -186,11 +186,11 @@ public final class GlassesService: ObservableObject {
     /// state is the real "glasses connected" signal — being registered alone leaves
     /// the device idle ("Linked · turn on glasses") until a session brings it online.
     private func syncDeviceMonitoring() {
-        if registration == .registered {
-            startDeviceMonitoring()
-        } else {
-            stopDeviceMonitoring()
-        }
+        // Disabled: the DeviceStateSession never reaches .running in this setup, and its
+        // DAT audio-session churn (SessionCore "!int" spam) was thrashing the shared
+        // AVAudioSession so the wake-word mic engine (AUIOClient_StartIO) couldn't start.
+        // Connection status comes from activeDeviceStream (observeDevice) instead.
+        stopDeviceMonitoring()
     }
 
     private func startDeviceMonitoring() {
