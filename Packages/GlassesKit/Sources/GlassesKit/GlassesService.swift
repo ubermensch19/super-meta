@@ -124,6 +124,19 @@ public final class GlassesService: ObservableObject {
         catch { setError("Registration failed: \(error.localizedDescription)") }
     }
 
+    /// Completes registration / permission flows. Call from `.onOpenURL` — the Meta
+    /// app redirects back to `metamod://…?metaWearablesAction=…` and the SDK finishes
+    /// the handshake here.
+    public func handleCallbackURL(_ url: URL) {
+        guard let wearables else { return }
+        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        guard components?.queryItems?.contains(where: { $0.name == "metaWearablesAction" }) == true else { return }
+        Task { @MainActor in
+            do { _ = try await wearables.handleUrl(url) }
+            catch { setError("Couldn't finish connecting: \(error.localizedDescription)") }
+        }
+    }
+
     private func observeRegistration(_ wearables: WearablesInterface) {
         registration = map(wearables.registrationState)
         registrationTask = Task { @MainActor [weak self] in

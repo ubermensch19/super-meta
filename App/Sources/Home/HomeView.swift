@@ -81,19 +81,35 @@ struct HomeView: View {
 
     private var connectionChip: some View {
         HStack(spacing: 6) {
-            Circle().fill(glasses.hasActiveDevice ? Theme.Palette.positive : Theme.Palette.textMuted).frame(width: 6, height: 6)
+            Circle().fill(dotColor).frame(width: 6, height: 6)
             Text(connectionText).font(.system(size: 12)).foregroundStyle(Theme.Palette.textSecondary)
             if glasses.isAvailable && glasses.registration != .registered {
-                Button("Connect") { Task { await glasses.startRegistration() } }
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Theme.Palette.accent)
+                Button(glasses.registration == .registering ? "Connecting…" : "Connect") {
+                    Task { await glasses.startRegistration() }
+                }
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Theme.Palette.accent)
+                .disabled(glasses.registration == .registering)
             }
         }
     }
 
+    private var dotColor: Color {
+        if glasses.hasActiveDevice { return Theme.Palette.positive }
+        if glasses.registration == .registered { return Theme.Palette.accent }
+        return Theme.Palette.textMuted
+    }
+
     private var connectionText: String {
         if !glasses.isAvailable { return "No glasses · using photos" }
-        return glasses.hasActiveDevice ? "Glasses connected" : "Glasses not connected"
+        switch glasses.registration {
+        case .registered:
+            return glasses.hasActiveDevice ? "Glasses connected" : "Linked · turn on glasses"
+        case .registering:
+            return "Connecting…"
+        default:
+            return "Glasses not linked"
+        }
     }
 
     // MARK: Hero

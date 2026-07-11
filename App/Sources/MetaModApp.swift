@@ -27,6 +27,7 @@ struct MetaModApp: App {
                         .environmentObject(glasses)
                         .environmentObject(providers)
                 }
+                .onOpenURL { url in glasses.handleCallbackURL(url) }
         }
         .modelContainer(for: VisionRecord.self)
     }
