@@ -98,7 +98,7 @@ struct HermesPairingView: View {
                 applyEndpoint(code)
             }
         }
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(.light)
         .enableInjection()
     }
 

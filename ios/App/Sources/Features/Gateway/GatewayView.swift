@@ -47,7 +47,7 @@ struct GatewayView: View {
         .background(Theme.Palette.canvas.ignoresSafeArea())
         .navigationTitle("Agent Link")
         .navigationBarTitleDisplayMode(.inline)
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(.light)
         .enableInjection()
         .onAppear { portText = String(gateway.port); tokenText = gateway.token }
     }

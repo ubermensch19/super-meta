@@ -22,7 +22,7 @@ struct ImageSourceView: View {
                     .overlay(alignment: .topTrailing) {
                         Button { self.image = nil } label: {
                             Image(systemName: "xmark.circle.fill")
-                                .foregroundStyle(.white, Theme.Palette.surfaceHigh)
+                                .foregroundStyle(.white, Theme.Palette.ink)
                                 .padding(Theme.Spacing.sm)
                         }
                     }

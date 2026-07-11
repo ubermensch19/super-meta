@@ -48,7 +48,7 @@ struct LeanEatView: View {
         .background(Theme.Palette.canvas.ignoresSafeArea())
         .navigationTitle("LeanEat")
         .navigationBarTitleDisplayMode(.inline)
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(.light)
         .enableInjection()
     }
 
