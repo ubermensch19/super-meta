@@ -145,6 +145,13 @@ public final class GlassesService: ObservableObject {
         catch { setError("Registration failed: \(error.localizedDescription)") }
     }
 
+    /// Unlinks the app from the glasses (the connect toggle turned off).
+    public func startUnregistration() async {
+        guard let wearables else { return }
+        do { try await wearables.startUnregistration() }
+        catch { setError("Couldn't disconnect: \(error.localizedDescription)") }
+    }
+
     /// Completes registration / permission flows. Call from `.onOpenURL` — the Meta
     /// app redirects back to `metamod://…?metaWearablesAction=…` and the SDK finishes
     /// the handshake here.

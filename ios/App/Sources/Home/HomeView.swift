@@ -8,7 +8,16 @@ import Inject
 struct HomeView: View {
     @EnvironmentObject private var glasses: GlassesService
     @State private var showSettings = false
+    @State private var showConnect = false
+    @State private var connectShownOnce = false
     @ObserveInjection var inject
+
+    /// Auto-present the connect sheet once per launch when the glasses aren't linked.
+    private func maybeShowConnect() {
+        guard glasses.isAvailable, glasses.registration == .notRegistered, !connectShownOnce else { return }
+        connectShownOnce = true
+        showConnect = true
+    }
 
     var body: some View {
         NavigationStack {
@@ -56,6 +65,11 @@ struct HomeView: View {
             .background(Theme.Palette.canvas.ignoresSafeArea())
             .navigationBarHidden(true)
             .sheet(isPresented: $showSettings) { SettingsView() }
+            .sheet(isPresented: $showConnect) {
+                ConnectGlassesView().environmentObject(glasses)
+            }
+            .onAppear { maybeShowConnect() }
+            .onChange(of: glasses.registration) { _, _ in maybeShowConnect() }
         }
         .preferredColorScheme(.dark)
         .enableInjection()
@@ -94,7 +108,7 @@ struct HomeView: View {
             Text(connectionText).font(.system(size: 12)).foregroundStyle(Theme.Palette.textSecondary)
             if glasses.isAvailable && glasses.registration != .registered {
                 Button(glasses.registration == .registering ? "Connecting…" : "Connect") {
-                    Task { await glasses.startRegistration() }
+                    showConnect = true
                 }
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(Theme.Palette.accent)
