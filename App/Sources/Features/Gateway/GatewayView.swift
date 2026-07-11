@@ -1,10 +1,12 @@
 import SwiftUI
 import DesignSystem
 import AgentGateway
+import Inject
 
 struct GatewayView: View {
     @EnvironmentObject private var gateway: GatewayService
     @State private var portText = ""
+    @ObserveInjection var inject
     @State private var tokenText = ""
 
     var body: some View {
@@ -46,6 +48,7 @@ struct GatewayView: View {
         .navigationTitle("Agent Link")
         .navigationBarTitleDisplayMode(.inline)
         .preferredColorScheme(.dark)
+        .enableInjection()
         .onAppear { portText = String(gateway.port); tokenText = gateway.token }
     }
 

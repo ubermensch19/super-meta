@@ -1,12 +1,14 @@
 import SwiftUI
 import DesignSystem
 import GlassesKit
+import Inject
 
 struct LiveAIView: View {
     @EnvironmentObject private var providers: ProviderManager
     @EnvironmentObject private var glasses: GlassesService
     @StateObject private var session = RealtimeSession()
     @State private var mode: LiveAIMode = .standard
+    @ObserveInjection var inject
 
     var body: some View {
         VStack(spacing: Theme.Spacing.lg) {
@@ -20,6 +22,7 @@ struct LiveAIView: View {
         .navigationTitle("Live AI")
         .navigationBarTitleDisplayMode(.inline)
         .preferredColorScheme(.dark)
+        .enableInjection()
         .onDisappear { session.stop() }
     }
 

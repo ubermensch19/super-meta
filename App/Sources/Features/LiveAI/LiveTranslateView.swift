@@ -1,11 +1,13 @@
 import SwiftUI
 import DesignSystem
 import GlassesKit
+import Inject
 
 struct LiveTranslateView: View {
     @EnvironmentObject private var providers: ProviderManager
     @EnvironmentObject private var glasses: GlassesService
     @StateObject private var session = RealtimeSession()
+    @ObserveInjection var inject
 
     @State private var source = "English"
     @State private var target = "Spanish"
@@ -40,6 +42,7 @@ struct LiveTranslateView: View {
         .navigationTitle("Live Translate")
         .navigationBarTitleDisplayMode(.inline)
         .preferredColorScheme(.dark)
+        .enableInjection()
         .onDisappear { session.stop() }
     }
 

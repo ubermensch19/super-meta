@@ -1,12 +1,14 @@
 import SwiftUI
 import DesignSystem
 import GlassesKit
+import Inject
 
 /// The feature hub — an editorial layout with a hero action and grouped sections
 /// rather than a uniform tile grid.
 struct HomeView: View {
     @EnvironmentObject private var glasses: GlassesService
     @State private var showSettings = false
+    @ObserveInjection var inject
 
     var body: some View {
         NavigationStack {
@@ -56,6 +58,7 @@ struct HomeView: View {
             .sheet(isPresented: $showSettings) { SettingsView() }
         }
         .preferredColorScheme(.dark)
+        .enableInjection()
     }
 
     // MARK: Header

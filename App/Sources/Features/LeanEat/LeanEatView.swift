@@ -1,10 +1,12 @@
 import SwiftUI
 import SwiftData
 import DesignSystem
+import Inject
 
 struct LeanEatView: View {
     @EnvironmentObject private var providers: ProviderManager
     @Environment(\.modelContext) private var context
+    @ObserveInjection var inject
 
     @State private var image: UIImage?
     @State private var result = ""
@@ -47,6 +49,7 @@ struct LeanEatView: View {
         .navigationTitle("LeanEat")
         .navigationBarTitleDisplayMode(.inline)
         .preferredColorScheme(.dark)
+        .enableInjection()
     }
 
     private func analyze() async {
