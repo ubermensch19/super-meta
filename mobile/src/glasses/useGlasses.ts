@@ -1,23 +1,24 @@
 import { Palette } from '../theme';
+import {
+  useGlassesStatus,
+  startRegistration,
+  isNativeAvailable,
+  type GlassesStatus,
+  type Registration,
+} from '../../modules/expo-glasses';
 
-// Connection state mirrors the native GlassesService. Until the Meta Wearables
-// DAT SDK is bridged as a native module (needs an Expo dev build, not Expo Go),
-// this reports the "no glasses · using photos" fallback path the app already has.
+// Thin app-facing wrapper over the expo-glasses native module. In Expo Go (or on
+// web) the module is absent and this reports the "no glasses · using photos"
+// fallback; in a dev/production build it reflects the live DAT SDK connection.
+export type { Registration, GlassesStatus };
 
-export type Registration = 'notLinked' | 'registering' | 'registered';
-
-export interface GlassesState {
-  isAvailable: boolean;
-  registration: Registration;
-  hasActiveDevice: boolean;
+export function useGlasses(): GlassesStatus {
+  return useGlassesStatus();
 }
 
-export function useGlasses(): GlassesState {
-  // Static stub for now; becomes a real hook over the native module later.
-  return { isAvailable: false, registration: 'notLinked', hasActiveDevice: false };
-}
+export { startRegistration, isNativeAvailable };
 
-export function connectionText(g: GlassesState): string {
+export function connectionText(g: GlassesStatus): string {
   if (!g.isAvailable) return 'No glasses · using photos';
   switch (g.registration) {
     case 'registered':
@@ -29,7 +30,7 @@ export function connectionText(g: GlassesState): string {
   }
 }
 
-export function dotColor(g: GlassesState): string {
+export function dotColor(g: GlassesStatus): string {
   if (g.hasActiveDevice) return Palette.positive;
   if (g.registration === 'registered') return Palette.accent;
   return Palette.textMuted;
