@@ -62,6 +62,10 @@ struct HermesView: View {
                 showPairing = true
             }
         }
+        .onChange(of: hermes.state) { _, newState in
+            // Pairing rejections need user action on the gateway — surface the steps.
+            if newState == .waitingForPairing { showPairing = true }
+        }
     }
 
     // MARK: Header

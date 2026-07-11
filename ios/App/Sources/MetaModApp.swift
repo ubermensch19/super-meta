@@ -53,7 +53,10 @@ struct MetaModApp: App {
             // Start listening when we come to the foreground; keep listening in the
             // background/locked (the active audio session keeps us alive). We only
             // stop when the user turns the toggle off.
-            if phase == .active, wakeListener.enabled { wakeListener.start() }
+            if phase == .active {
+                if wakeListener.enabled { wakeListener.start() }
+                hermes.resyncOnForeground()
+            }
         }
     }
 
