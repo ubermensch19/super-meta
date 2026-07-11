@@ -20,7 +20,7 @@ struct MetaModApp: App {
         let gatewayService = GatewayService(glasses: glassesService)
         _glasses = StateObject(wrappedValue: glassesService)
         _gateway = StateObject(wrappedValue: gatewayService)
-        _hermes = StateObject(wrappedValue: HermesService(gateway: gatewayService))
+        _hermes = StateObject(wrappedValue: HermesService())
     }
 
     var body: some Scene {
