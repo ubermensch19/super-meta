@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// A translucent glass panel — the building block for floating HUD controls.
+/// A white glass panel with a soft shadow — the building block for cards and controls.
 public struct HUDPanel<Content: View>: View {
     private let content: Content
 
@@ -13,11 +13,8 @@ public struct HUDPanel<Content: View>: View {
             .padding(Theme.Spacing.md)
             .background(
                 RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous)
-                    .fill(.ultraThinMaterial)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous)
-                            .fill(Theme.Palette.surface.opacity(0.55))
-                    )
+                    .fill(Theme.Palette.surface)
+                    .shadow(color: .black.opacity(0.05), radius: 12, x: 0, y: 4)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous)
@@ -49,7 +46,7 @@ public struct StatusBadge: View {
         .padding(.horizontal, Theme.Spacing.md)
         .padding(.vertical, Theme.Spacing.sm)
         .background(
-            Capsule().fill(Theme.Palette.surface.opacity(0.7))
+            Capsule().fill(Theme.Palette.surface)
         )
         .overlay(
             Capsule().strokeBorder(Theme.Palette.border, lineWidth: 1)
@@ -57,7 +54,7 @@ public struct StatusBadge: View {
     }
 }
 
-/// Primary call-to-action styled for the HUD theme.
+/// Primary call-to-action — a near-black "ink" pill with white text.
 public struct HUDButton: View {
     private let title: String
     private let systemImage: String?
@@ -78,12 +75,13 @@ public struct HUDButton: View {
                 Text(title)
                     .font(Theme.Font.title(17))
             }
-            .foregroundStyle(Theme.Palette.canvas)
+            .foregroundStyle(Color.white)
             .frame(maxWidth: .infinity)
             .padding(.vertical, Theme.Spacing.md)
             .background(
-                RoundedRectangle(cornerRadius: Theme.Radius.sm, style: .continuous)
-                    .fill(Theme.Palette.accent)
+                RoundedRectangle(cornerRadius: Theme.Radius.md, style: .continuous)
+                    .fill(Theme.Palette.ink)
+                    .shadow(color: Theme.Palette.ink.opacity(0.18), radius: 10, x: 0, y: 5)
             )
         }
         .buttonStyle(.plain)
@@ -95,7 +93,7 @@ public struct CanvasBackground: ViewModifier {
     public func body(content: Content) -> some View {
         content
             .background(Theme.Palette.canvas.ignoresSafeArea())
-            .preferredColorScheme(.dark)
+            .preferredColorScheme(.light)
     }
 }
 
