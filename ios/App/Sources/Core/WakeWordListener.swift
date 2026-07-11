@@ -68,23 +68,24 @@ final class WakeWordListener: ObservableObject {
     private init() {
         self.enabled = defaults.bool(forKey: Keys.enabled)
         self.phrase = defaults.string(forKey: Keys.phrase) ?? "hey vision"
-        // AVAudioSession posts these on a background thread, so deliver them through
-        // a closure that hops to the main actor. A @MainActor @objc selector would
-        // trip a libdispatch queue assertion and crash when a BT route change fires.
+        // AVAudioSession posts these on a background thread. Deliver on the main
+        // queue so the main-actor closure body runs on the main actor — otherwise
+        // Swift's isolation check (swift_task_isCurrentExecutor) traps and kills the
+        // app when a Bluetooth route change fires on a real device.
         routeObserver = NotificationCenter.default.addObserver(
-            forName: AVAudioSession.routeChangeNotification, object: nil, queue: nil
+            forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in
+            MainActor.assumeIsolated {
                 guard let self, self.listening, !self.paused else { return }
                 self.scheduleRestart()
             }
         }
         interruptionObserver = NotificationCenter.default.addObserver(
-            forName: AVAudioSession.interruptionNotification, object: nil, queue: nil
+            forName: AVAudioSession.interruptionNotification, object: nil, queue: .main
         ) { [weak self] note in
             let type = (note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt)
                 .flatMap(AVAudioSession.InterruptionType.init(rawValue:))
-            Task { @MainActor in
+            MainActor.assumeIsolated {
                 guard let self, self.listening, !self.paused else { return }
                 switch type {
                 case .began: self.teardownRecognition()
