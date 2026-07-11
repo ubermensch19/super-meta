@@ -25,7 +25,7 @@ struct MetaModApp: App {
 
     var body: some Scene {
         WindowGroup {
-            HomeView()
+            RootTabView()
                 .environmentObject(glasses)
                 .environmentObject(providers)
                 .environmentObject(gateway)
@@ -33,18 +33,6 @@ struct MetaModApp: App {
                 .environmentObject(router)
                 .environmentObject(session)
                 .environmentObject(wakeListener)
-                .sheet(isPresented: $router.showQuickVision) {
-                    NavigationStack { QuickVisionView() }
-                        .environmentObject(glasses)
-                        .environmentObject(providers)
-                }
-                .sheet(isPresented: $router.liveAIWoke) {
-                    NavigationStack { LiveAIView() }
-                        .environmentObject(glasses)
-                        .environmentObject(providers)
-                        .environmentObject(session)
-                        .environmentObject(hermes)
-                }
                 .onOpenURL { url in glasses.handleCallbackURL(url) }
                 .onAppear(perform: configureWake)
         }

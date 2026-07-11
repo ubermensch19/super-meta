@@ -13,6 +13,9 @@ struct SettingsView: View {
     @State private var modelChoice = "gpt-realtime"
     @ObserveInjection var inject
 
+    /// Hidden when embedded as a tab (there's no sheet to dismiss).
+    var showsDoneButton = true
+
     private let customTag = "__custom__"
 
     var body: some View {
@@ -25,17 +28,20 @@ struct SettingsView: View {
                 aboutSection
             }
             .scrollContentBackground(.hidden)
+            .contentMargins(.bottom, 90, for: .scrollContent)
             .background(Theme.Palette.canvas.ignoresSafeArea())
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") { dismiss() }
-                        .foregroundStyle(Theme.Palette.accent)
+                if showsDoneButton {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Done") { dismiss() }
+                            .foregroundStyle(Theme.Palette.textPrimary)
+                    }
                 }
             }
         }
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(.light)
         .enableInjection()
         .onAppear {
             useCustomModel = !ProviderManager.knownRealtimeModels.contains(providers.realtimeModel)
@@ -207,7 +213,7 @@ struct APIKeyEntryView: View {
         .navigationTitle(vendor.displayName)
         .navigationBarTitleDisplayMode(.inline)
         .onAppear { draft = providers.apiKey(for: vendor) }
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(.light)
     }
 
     private var footerHint: String {
@@ -285,7 +291,7 @@ struct ModelPickerView: View {
         .navigationTitle("\(vendor.displayName) Model")
         .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $search, prompt: "Filter models")
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(.light)
         .task { await load() }
     }
 
