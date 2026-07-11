@@ -15,15 +15,16 @@ final class HermesService: ObservableObject {
     @Published private(set) var streamingReply = ""
     @Published var focusedSessionKey = "main"
 
-    /// Fires with hermes' full reply whenever a run finishes, even if the
-    /// original `ask` already timed out — the voice layer uses this to announce
-    /// late answers.
-    var onReplyFinal: ((String) -> Void)?
+    /// Fires with the full reply of a run whose voice-budgeted ask already gave
+    /// up — the voice layer announces these late answers.
+    var onLateReply: ((String) -> Void)?
 
     private let api: OperatorAPI
     private let gateway: GatewayService
     private struct ReplyBox: @unchecked Sendable { let text: String }
     private var pendingReplies: [String: CheckedContinuation<ReplyBox, Error>] = [:]
+    /// Runs that outlived their voice budget; their finals go to `onLateReply`.
+    private var lateReplyRuns: Set<String> = []
 
     var isConfigured: Bool { !gateway.token.isEmpty || UserDefaults.standard.bool(forKey: "hermes_use_mock") }
 
@@ -59,11 +60,31 @@ final class HermesService: ObservableObject {
     /// still lands in the transcript and `onReplyFinal` when it arrives.
     @discardableResult
     func ask(_ text: String, sessionKey: String? = nil, timeout: TimeInterval = 120) async throws -> String {
+        let runID = try await startRun(text, sessionKey: sessionKey)
+        return try await awaitReply(runID: runID, timeout: timeout)
+    }
+
+    /// Voice variant of `ask`: waits only `budget` seconds, then returns nil and
+    /// routes the eventual reply to `onLateReply` so it can be spoken when ready.
+    func askWithBudget(_ text: String, sessionKey: String? = nil, budget: TimeInterval = 12) async throws -> String? {
+        let runID = try await startRun(text, sessionKey: sessionKey)
+        do {
+            return try await awaitReply(runID: runID, timeout: budget)
+        } catch let error as GatewayError where error.code == "TIMEOUT" {
+            lateReplyRuns.insert(runID)
+            return nil
+        }
+    }
+
+    private func startRun(_ text: String, sessionKey: String?) async throws -> String {
         try await api.ensureConnected()
         let key = sessionKey ?? focusedSessionKey
         messages.append(HermesChatMessage(role: .user, text: text))
         streamingReply = ""
-        let runID = try await api.chatSend(sessionKey: key, text: text)
+        return try await api.chatSend(sessionKey: key, text: text)
+    }
+
+    private func awaitReply(runID: String, timeout: TimeInterval) async throws -> String {
         let box: ReplyBox = try await withCheckedThrowingContinuation { continuation in
             pendingReplies[runID] = continuation
             Task { @MainActor [weak self] in
@@ -96,6 +117,66 @@ final class HermesService: ObservableObject {
         sessions = list
     }
 
+    // MARK: Voice tool calls
+
+    /// Dispatches a realtime function call from the voice model. Always returns a
+    /// JSON string — errors included — so the model can verbalize the outcome.
+    func handleToolCall(name: String, argumentsJSON: String) async -> String {
+        let args = (try? JSONSerialization.jsonObject(with: Data(argumentsJSON.utf8))) as? [String: Any] ?? [:]
+        do {
+            switch name {
+            case "hermes_ask":
+                guard let question = args["question"] as? String, !question.isEmpty else {
+                    return Self.toolJSON(["error": "Missing question"])
+                }
+                if let reply = try await askWithBudget(question, sessionKey: args["session_id"] as? String) {
+                    return Self.toolJSON(["reply": reply])
+                }
+                return Self.toolJSON([
+                    "status": "working",
+                    "note": "Hermes is still thinking. The answer will be announced when it's ready."
+                ])
+            case "hermes_spawn_task":
+                guard let prompt = args["prompt"] as? String, !prompt.isEmpty else {
+                    return Self.toolJSON(["error": "Missing prompt"])
+                }
+                let key = try await spawnTask(prompt: prompt, repo: args["repo"] as? String)
+                return Self.toolJSON(["status": "started", "session": shortKey(key)])
+            case "hermes_send_message":
+                guard let recipient = args["recipient"] as? String, !recipient.isEmpty,
+                      let message = args["message"] as? String, !message.isEmpty else {
+                    return Self.toolJSON(["error": "Missing recipient or message"])
+                }
+                let channel = args["channel"] as? String ?? "telegram"
+                try await sendChannelMessage(channel: channel, to: recipient, text: message)
+                return Self.toolJSON(["status": "sent", "channel": channel, "recipient": recipient])
+            case "hermes_sessions_status":
+                try await api.ensureConnected()
+                await refreshSessions()
+                let summary = sessions.map { session -> [String: Any] in
+                    var entry: [String: Any] = ["session": session.label, "status": session.status]
+                    if let last = session.lastMessage { entry["lastMessage"] = String(last.prefix(200)) }
+                    return entry
+                }
+                return Self.toolJSON(["sessions": summary])
+            default:
+                return Self.toolJSON(["error": "Unknown tool \(name)"])
+            }
+        } catch let error as GatewayError {
+            return Self.toolJSON(["error": error.message])
+        } catch {
+            return Self.toolJSON(["error": error.localizedDescription])
+        }
+    }
+
+    private static func toolJSON(_ object: [String: Any]) -> String {
+        guard let data = try? JSONSerialization.data(withJSONObject: object),
+              let string = String(data: data, encoding: .utf8) else {
+            return #"{"error":"Failed to encode tool result"}"#
+        }
+        return string
+    }
+
     // MARK: Events
 
     private func handleAgentEvent(_ event: OperatorAgentEvent) {
@@ -116,7 +197,9 @@ final class HermesService: ObservableObject {
             if let runID, let continuation = pendingReplies.removeValue(forKey: runID) {
                 continuation.resume(returning: ReplyBox(text: reply))
             }
-            onReplyFinal?(reply)
+            if let runID, lateReplyRuns.remove(runID) != nil {
+                onLateReply?(reply)
+            }
         case let .replyFailed(sessionKey, runID, message):
             if sessionKeysMatch(sessionKey, focusedSessionKey) {
                 streamingReply = ""
@@ -125,6 +208,7 @@ final class HermesService: ObservableObject {
             if let runID, let continuation = pendingReplies.removeValue(forKey: runID) {
                 continuation.resume(throwing: GatewayError(code: "RUN_FAILED", message: message))
             }
+            if let runID { lateReplyRuns.remove(runID) }
         case .sessionsChanged:
             Task { @MainActor [weak self] in await self?.refreshSessions() }
         }

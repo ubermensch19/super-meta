@@ -9,6 +9,7 @@ struct LiveAIView: View {
     // Shared assistant session (owned by MetaModApp) so this view shows whatever
     // the session is doing — including a wake-word-started conversation.
     @EnvironmentObject private var session: RealtimeSession
+    @EnvironmentObject private var hermes: HermesService
     @State private var mode: LiveAIMode = .standard
     @ObserveInjection var inject
 
@@ -68,7 +69,14 @@ struct LiveAIView: View {
     private var controlButton: some View {
         HUDButton(buttonTitle, systemImage: isActive ? "stop.fill" : "mic.fill") {
             if isActive { session.stop() }
-            else { session.start(instructions: mode.instructions, providers: providers, glasses: glasses, injectFrames: glasses.isAvailable) }
+            else {
+                let hermesReady = hermes.isConfigured
+                session.start(
+                    instructions: mode.instructions + (hermesReady ? HermesTools.instructionsAddendum : ""),
+                    providers: providers, glasses: glasses,
+                    injectFrames: glasses.isAvailable,
+                    tools: hermesReady ? HermesTools.all : [])
+            }
         }
     }
 

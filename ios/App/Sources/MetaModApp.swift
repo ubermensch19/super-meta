@@ -43,6 +43,7 @@ struct MetaModApp: App {
                         .environmentObject(glasses)
                         .environmentObject(providers)
                         .environmentObject(session)
+                        .environmentObject(hermes)
                 }
                 .onOpenURL { url in glasses.handleCallbackURL(url) }
                 .onAppear(perform: configureWake)
@@ -57,14 +58,26 @@ struct MetaModApp: App {
     }
 
     private func configureWake() {
+        let session = self.session
+        let hermes = self.hermes
         wakeListener.onWake = {
             router.liveAIWoke = true // surface the Live AI sheet if/when foregrounded
             if session.status == .idle {
+                let hermesReady = hermes.isConfigured
                 session.start(
-                    instructions: LiveAIMode.standard.instructions,
+                    instructions: LiveAIMode.standard.instructions + (hermesReady ? HermesTools.instructionsAddendum : ""),
                     providers: providers, glasses: glasses,
-                    injectFrames: glasses.isAvailable)
+                    injectFrames: glasses.isAvailable,
+                    tools: hermesReady ? HermesTools.all : [])
             }
+        }
+        // Voice commands route through hermes; late replies get spoken when they land.
+        session.toolHandler = { [weak hermes] name, argumentsJSON in
+            await hermes?.handleToolCall(name: name, argumentsJSON: argumentsJSON)
+                ?? #"{"error":"Hermes is not available"}"#
+        }
+        hermes.onLateReply = { [weak session] reply in
+            session?.announce("Hermes has finished working. Relay this answer to the user: \(reply)")
         }
         if wakeListener.enabled { wakeListener.start() }
     }

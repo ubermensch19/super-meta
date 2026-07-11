@@ -15,6 +15,9 @@ final class RealtimeSession: ObservableObject {
     @Published var transcript = ""
     @Published var userLine = ""
 
+    /// Resolves a model function call to its JSON result (see `HermesService.handleToolCall`).
+    var toolHandler: ((_ name: String, _ argumentsJSON: String) async -> String)?
+
     private var client: OpenAIRealtimeClient?
     private let audio = RealtimeAudioEngine()
     private var eventTask: Task<Void, Never>?
@@ -22,6 +25,12 @@ final class RealtimeSession: ObservableObject {
 
     private var providers: ProviderManager?
     private var glasses: GlassesService?
+
+    /// The realtime API rejects response.create while a response is streaming,
+    /// so tool outputs and announcements queue until the current one finishes.
+    private var responseInFlight = false
+    private var pendingResponseCreate = false
+    private var announcementQueue: [String] = []
 
     init() {}
 
@@ -31,7 +40,8 @@ final class RealtimeSession: ObservableObject {
         voice: String = "alloy",
         providers: ProviderManager,
         glasses: GlassesService,
-        injectFrames: Bool = false
+        injectFrames: Bool = false,
+        tools: [RealtimeTool] = []
     ) {
         self.providers = providers
         self.glasses = glasses
@@ -43,12 +53,15 @@ final class RealtimeSession: ObservableObject {
         status = .connecting
         transcript = ""
         userLine = ""
+        responseInFlight = false
+        pendingResponseCreate = false
+        announcementQueue = []
 
         // The wake-word listener and a live session both want the mic/HFP route;
         // release the listener while we're connected, revive it on stop().
         WakeWordListener.shared.pause()
 
-        let client = OpenAIRealtimeClient(apiKey: key, config: .init(model: providers.realtimeModel, voice: voice, instructions: instructions, audio: true))
+        let client = OpenAIRealtimeClient(apiKey: key, config: .init(model: providers.realtimeModel, voice: voice, instructions: instructions, audio: true, tools: tools))
         self.client = client
 
         eventTask = Task { [weak self] in
@@ -77,6 +90,17 @@ final class RealtimeSession: ObservableObject {
         WakeWordListener.shared.resume()
     }
 
+    /// Speaks a line proactively (e.g. a late hermes reply), waiting out any
+    /// response that is currently streaming.
+    func announce(_ text: String) {
+        guard status == .live, client != nil else { return }
+        if responseInFlight {
+            announcementQueue.append(text)
+        } else {
+            client?.sendText(text)
+        }
+    }
+
     private func handle(_ event: RealtimeEvent) {
         switch event {
         case .sessionCreated, .sessionUpdated:
@@ -87,12 +111,42 @@ final class RealtimeSession: ObservableObject {
             transcript += delta
         case let .userTranscript(text):
             userLine = text
+        case .responseCreated:
+            responseInFlight = true
         case .responseDone:
             transcript += "\n"
+            responseInFlight = false
+            drainQueuedWork()
+        case let .functionCall(name, callID, argumentsJSON):
+            runTool(name: name, callID: callID, argumentsJSON: argumentsJSON)
         case let .error(message):
             status = .error(message)
         case .other:
             break
+        }
+    }
+
+    private func runTool(name: String, callID: String, argumentsJSON: String) {
+        Task { @MainActor [weak self] in
+            let output = await self?.toolHandler?(name, argumentsJSON)
+                ?? #"{"error":"No agent is configured for tools"}"#
+            guard let self, let client = self.client else { return }
+            client.sendFunctionOutput(callID: callID, output: output)
+            if self.responseInFlight {
+                self.pendingResponseCreate = true
+            } else {
+                client.createResponse()
+            }
+        }
+    }
+
+    private func drainQueuedWork() {
+        guard let client else { return }
+        if pendingResponseCreate {
+            pendingResponseCreate = false
+            client.createResponse()
+        } else if !announcementQueue.isEmpty {
+            client.sendText(announcementQueue.removeFirst())
         }
     }
 
